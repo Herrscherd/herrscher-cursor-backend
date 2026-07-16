@@ -2,11 +2,115 @@ package cursor
 
 import (
 	"bufio"
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Herrscherd/herrscher-contracts"
 )
+
+func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
+	const (
+		content = "distinctive prompt: do not leak this in argv"
+		memory  = "recalled context: secret-memory-marker"
+		model   = "test-model"
+	)
+
+	stub := writeCursorStub(t)
+	prompt := contracts.Prompt{
+		Content:     content,
+		Context:     memory,
+		Attachments: []string{"/tmp/distinctive-attachment.png"},
+	}
+	expectedStdin := withContext(memory, withAttachments(content, prompt.Attachments))
+
+	for _, tc := range []struct {
+		name   string
+		kind   string
+		format string
+	}{
+		{name: "oneshot", kind: "oneshot", format: "json"},
+		{name: "stream", kind: "stream", format: "stream-json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			argvPath := filepath.Join(t.TempDir(), "argv")
+			if err := os.Setenv("CURSOR_STUB_ARGV", argvPath); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Unsetenv("CURSOR_STUB_ARGV") })
+
+			backend, err := NewBackend(context.Background(), Config{
+				Kind:  tc.kind,
+				Cmd:   stub,
+				Model: model,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := backend.Respond(context.Background(), prompt, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantResult := fmt.Sprintf("stdin-proof:%d:%x", len(expectedStdin), sha256Bytes(expectedStdin))
+			if got != wantResult {
+				t.Fatalf("result = %q, want %q (stdin was not delivered as expected)", got, wantResult)
+			}
+
+			argvBytes, err := os.ReadFile(argvPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			argv := strings.Fields(string(argvBytes))
+			for _, arg := range argv {
+				if strings.Contains(arg, content) || strings.Contains(arg, memory) {
+					t.Fatalf("prompt data leaked into argv: %q", arg)
+				}
+			}
+			assertContainsArgs(t, argv, "-p", "--output-format", tc.format, "--model", model)
+		})
+	}
+}
+
+func writeCursorStub(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "cursor-agent-stub")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$CURSOR_STUB_ARGV"
+stdin=$(cat)
+length=$(printf '%s' "$stdin" | wc -c | tr -d ' ')
+hash=$(printf '%s' "$stdin" | sha256sum | cut -d ' ' -f 1)
+printf '{"type":"result","subtype":"success","result":"stdin-proof:%s:%s"}\n' "$length" "$hash"
+`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return stub
+}
+
+func sha256Bytes(value string) [32]byte {
+	return sha256.Sum256([]byte(value))
+}
+
+func assertContainsArgs(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	for _, expected := range want {
+		found := false
+		for _, actual := range got {
+			if actual == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("argv = %v, missing %q", got, expected)
+		}
+	}
+}
 
 func TestCursorArgv(t *testing.T) {
 	got := cursorArgv([]string{"cursor-agent"}, "gpt-5", "sess-1")
