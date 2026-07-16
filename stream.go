@@ -15,6 +15,8 @@ import (
 )
 
 type streamResponder struct {
+	// ctx is the backend-lifetime context captured at NewBackend; it is used
+	// only as a fallback when Respond is called with a nil ctx.
 	ctx     context.Context
 	base    []string
 	model   string
@@ -31,11 +33,11 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 		ctx = r.ctx
 	}
 	content := withContext(p.Context, withAttachments(p.Content, p.Attachments))
+	// Prompt delivered on stdin only (see baseArgv); not passed as argv.
 	argv := cursorArgv(r.base, r.model, r.session)
-	argv = append(argv, content)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = r.dir
-	cmd.Env = os.Environ()
+	// cmd.Env left nil so the child inherits the parent environment directly.
 	if r.verbose {
 		cmd.Stderr = os.Stderr
 	} else {

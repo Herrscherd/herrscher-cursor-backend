@@ -2,7 +2,6 @@ package cursor
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -51,6 +50,8 @@ func NewBackend(ctx context.Context, c Config) (contracts.Backend, error) {
 }
 
 type oneShotResponder struct {
+	// ctx is the backend-lifetime context captured at NewBackend; it is used
+	// only as a fallback when Respond is called with a nil ctx.
 	ctx     context.Context
 	base    []string
 	model   string
@@ -69,27 +70,21 @@ func (o *oneShotResponder) Close() error { return nil }
 
 func runCmd(ctx context.Context, base []string, model, dir string, verbose bool, p contracts.Prompt) (string, error) {
 	content := withContext(p.Context, withAttachments(p.Content, p.Attachments))
-	argv := append(append([]string{}, base...), "-p", "--output-format", "json")
-	if model != "" {
-		argv = append(argv, "--model", model)
-	}
-	argv = append(argv, content)
+	// The prompt is delivered on stdin only; it is deliberately not passed as an
+	// argv element to avoid ARG_MAX limits and exposure via /proc/<pid>/cmdline.
+	argv := baseArgv(base, "json", model, "")
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(content)
-	cmd.Env = os.Environ()
-	var stderr bytes.Buffer
+	// cmd.Env left nil so the child inherits the parent environment directly.
 	if verbose {
 		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = &stderr
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		if stderr.Len() > 0 {
-			return parseResult(string(out)), fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return parseResult(string(out)), err
+		// stderr may carry secrets (tokens, authed URLs); never fold it into the
+		// error string. Under verbose it is already streamed to os.Stderr.
+		return parseResult(string(out)), fmt.Errorf("cursor exec failed: %w", err)
 	}
 	return parseResult(string(out)), nil
 }
@@ -110,7 +105,16 @@ func streamBase(fields []string) []string {
 }
 
 func cursorArgv(base []string, model, resume string) []string {
-	argv := append(append([]string{}, streamBase(base)...), "-p", "--output-format", "stream-json")
+	return baseArgv(base, "stream-json", model, resume)
+}
+
+// baseArgv builds the shared cursor-agent flag scaffolding. The prompt itself is
+// always delivered on stdin, never as a positional argv element.
+func baseArgv(base []string, format, model, resume string) []string {
+	b := streamBase(base)
+	argv := make([]string, 0, len(b)+7)
+	argv = append(argv, b...)
+	argv = append(argv, "-p", "--output-format", format)
 	if model != "" {
 		argv = append(argv, "--model", model)
 	}
