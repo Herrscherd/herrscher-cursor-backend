@@ -68,6 +68,16 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 	return tr.Text, nil
 }
 
+// ResumeToken returns the cursor session id for this conversation — the id fed
+// back to cursor-agent via --resume — for the host to persist and replay across
+// restarts. Before the first turn it returns the id supplied at construction.
+// Implements contracts.ResumeAware.
+func (r *streamResponder) ResumeToken() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.session
+}
+
 func (r *streamResponder) Close() error { return nil }
 
 var memoryFence = regexp.MustCompile(`(?i)<\s*/?\s*memory\s*>`)

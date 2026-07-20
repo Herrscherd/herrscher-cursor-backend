@@ -14,12 +14,13 @@ import (
 
 // Config configures a Cursor Agent backend.
 type Config struct {
-	Kind    string
-	Stream  bool
-	Cmd     string
-	Model   string
-	Dir     string
-	Verbose bool
+	Kind     string
+	Stream   bool
+	Cmd      string
+	Model    string
+	Dir      string
+	Verbose  bool
+	ResumeID string // cursor session id to resume on the first turn ("" = fresh)
 }
 
 func resolveBackend(kind string, stream bool) string {
@@ -43,7 +44,7 @@ func NewBackend(ctx context.Context, c Config) (contracts.Backend, error) {
 	case "oneshot":
 		return &oneShotResponder{ctx: ctx, base: base, model: c.Model, dir: c.Dir, verbose: c.Verbose}, nil
 	case "stream":
-		return &streamResponder{ctx: ctx, base: base, model: c.Model, dir: c.Dir, verbose: c.Verbose}, nil
+		return &streamResponder{ctx: ctx, base: base, model: c.Model, dir: c.Dir, verbose: c.Verbose, session: c.ResumeID}, nil
 	default:
 		return nil, fmt.Errorf("unknown backend kind %q", kind)
 	}
