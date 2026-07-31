@@ -1,25 +1,59 @@
 # herrscher-cursor-backend
 
-Cursor Agent backend for Herrscher. It implements `contracts.Backend` and
-registers itself as the `cursor` plugin.
+**Cursor Agent CLI as a Herrscher backend.** Turns an inbound prompt into a reply
+by running the locally installed `cursor-agent` binary headless
+(`-p --output-format json|stream-json`). It is not an API client: it holds no key
+and reaches no Cursor endpoint itself; authentication belongs to your
+`cursor-agent` install (`cursor-agent login`).
 
-It uses the official Cursor Agent CLI:
+## Role · Category · Ports · Config · Status · Repo
 
-```text
-cursor-agent -p --output-format json
-cursor-agent -p --output-format stream-json
-```
+| Aspect | Value |
+|--------|-------|
+| **Role** | Answers one prompt per turn by driving the local Cursor Agent CLI. |
+| **Category** | Backend (model edge) |
+| **Ports implemented** | `contracts.Backend`; `contracts.ResumeAware` (stream mode only) |
+| **Config & env** | `CURSOR_CMD` (default: `cursor-agent`), `CURSOR_MODEL`, `CURSOR_STREAM` (default: `true`), `CURSOR_DIR`, `CURSOR_KIND` |
+| **Status** | live |
+| **Repo** | [herrscher-cursor-backend](https://github.com/Herrscherd/herrscher-cursor-backend) |
 
-`oneshot` runs one command per message. `stream` resumes the Cursor session id
-between messages; Cursor's CLI exits after each headless turn, so the process is
-not kept open. Both modes pass context and downloaded attachment paths in the
-prompt and do not define provider-specific environment variables.
-
-Authentication is handled by Cursor Agent itself (`cursor-agent login` or
-`CURSOR_API_KEY`).
+## Install
 
 ```bash
-GOWORK=off go test ./...
-GOWORK=off go vet ./...
-GOWORK=off go test -race ./...
+herrscher plugin add github.com/Herrscherd/herrscher-cursor-backend
 ```
+
+## Two modes
+
+`stream` (default) uses `--output-format stream-json` and maps assistant text
+blocks, `tool_call` starts and the terminal `result` event onto
+`contracts.BackendEvent`. Unlike a persistent-process backend, `cursor-agent`
+exits after every headless turn, so continuity comes from the session id in the
+`result` event: it is stored and replayed as `--resume` on the next turn, and
+exposed via `ResumeToken()`. The host persists it and feeds it back through the
+`resume` setting at construction (host-injected — it is not one of the declared,
+env-backed settings).
+
+`oneshot` (`CURSOR_STREAM=false` or `CURSOR_KIND=oneshot`) uses
+`--output-format json`, emits no mid-turn events, and does not resume.
+
+Both modes deliver the prompt — recalled memory fenced into a `<memory
+data-only="true">` block, plus any downloaded attachment paths — on stdin only,
+never as argv, and define no provider-specific environment variables: the child
+inherits the parent environment as-is. stderr is discarded unless `Verbose` is
+set, and is never folded into returned errors (it may carry tokens).
+
+## Development
+
+This module sits outside the parent `go.work`, so local commands need
+`GOWORK=off`.
+
+```bash
+GOWORK=off go test -race ./...
+GOWORK=off go vet ./...
+```
+
+## Further reading
+
+- [Herrscher docs](https://github.com/Herrscherd/herrscher-docs) — `plugins/backend`
+- [contracts](https://github.com/Herrscherd/herrscher-contracts) — port signatures
