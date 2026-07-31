@@ -11,6 +11,7 @@ func init() {
 		Manifest: contracts.Manifest{
 			Kind:     "cursor",
 			Category: contracts.CategoryBackend,
+			Status:   contracts.StatusLive,
 			Config: []contracts.Setting{
 				{Key: "cmd", Env: "CURSOR_CMD", Help: "base command to run Cursor Agent", Default: "cursor-agent"},
 				{Key: "model", Env: "CURSOR_MODEL", Help: "model override"},
