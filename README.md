@@ -43,6 +43,15 @@ never as argv, and define no provider-specific environment variables: the child
 inherits the parent environment as-is. stderr is discarded unless `Verbose` is
 set, and is never folded into returned errors (it may carry tokens).
 
+## Model catalog
+
+`Models` (`models.go`) is published through `Manifest.Models`, so the host can
+read this backend's catalog without instantiating it. Every entry is route
+`native`: `cursor-agent` answers on the login of the local install and there is
+no way to point it at the product's gateway. A host running under the
+`gateway-only` route policy therefore filters the whole catalog out, and cursor
+disappears from the selector entirely — that is intended, not a packaging bug.
+
 ## Development
 
 This module sits outside the parent `go.work`, so local commands need

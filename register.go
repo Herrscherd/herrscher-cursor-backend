@@ -19,6 +19,7 @@ func init() {
 				{Key: "dir", Env: "CURSOR_DIR", Help: "working directory"},
 				{Key: "kind", Env: "CURSOR_KIND", Help: "backend kind"},
 			},
+			Models: Models,
 		},
 		Backend: func(ctx context.Context, cfg contracts.PluginConfig) (contracts.Backend, error) {
 			return NewBackend(ctx, Config{
