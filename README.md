@@ -1,21 +1,14 @@
 # herrscher-cursor-backend
 
-**Cursor Agent CLI as a Herrscher backend.** Turns an inbound prompt into a reply
-by running the locally installed `cursor-agent` binary headless
-(`-p --output-format json|stream-json`). It is not an API client: it holds no key
-and reaches no Cursor endpoint itself; authentication belongs to your
-`cursor-agent` install (`cursor-agent login`).
+**Cursor Agent CLI as a Herrscher backend.** It turns an inbound prompt into a
+reply by running the locally installed `cursor-agent` binary headless
+(`-p --output-format json|stream-json`).
 
-## Role · Category · Ports · Config · Status · Repo
+It is not an API client. It holds no key and reaches no Cursor endpoint itself.
+Authentication belongs to your `cursor-agent` install, via `cursor-agent login`.
 
-| Aspect | Value |
-|--------|-------|
-| **Role** | Answers one prompt per turn by driving the local Cursor Agent CLI. |
-| **Category** | Backend (model edge) |
-| **Ports implemented** | `contracts.Backend`; `contracts.ResumeAware` (stream mode only) |
-| **Config & env** | `CURSOR_CMD` (default: `cursor-agent`), `CURSOR_MODEL`, `CURSOR_STREAM` (default: `true`), `CURSOR_DIR`, `CURSOR_KIND` |
-| **Status** | live |
-| **Repo** | [herrscher-cursor-backend](https://github.com/Herrscherd/herrscher-cursor-backend) |
+Category: backend, the model edge. Ports: `contracts.Backend`, and
+`contracts.ResumeAware` in stream mode. Status: live.
 
 ## Install
 
@@ -23,34 +16,49 @@ and reaches no Cursor endpoint itself; authentication belongs to your
 herrscher plugin add github.com/Herrscherd/herrscher-cursor-backend
 ```
 
+## Configuration
+
+| Setting | Default | What it is |
+|---|---|---|
+| `CURSOR_CMD` | `cursor-agent` | the binary to run |
+| `CURSOR_MODEL` | | the model a session gets when it names none |
+| `CURSOR_STREAM` | `true` | `false` selects the oneshot mode |
+| `CURSOR_DIR` | | the working directory the CLI runs in |
+| `CURSOR_KIND` | | `stream` or `oneshot`, the explicit form of `CURSOR_STREAM` |
+
 ## Two modes
 
-`stream` (default) uses `--output-format stream-json` and maps assistant text
+`stream`, the default, uses `--output-format stream-json` and maps assistant text
 blocks, `tool_call` starts and the terminal `result` event onto
-`contracts.BackendEvent`. Unlike a persistent-process backend, `cursor-agent`
-exits after every headless turn, so continuity comes from the session id in the
-`result` event: it is stored and replayed as `--resume` on the next turn, and
-exposed via `ResumeToken()`. The host persists it and feeds it back through the
-`resume` setting at construction (host-injected — it is not one of the declared,
-env-backed settings).
+`contracts.BackendEvent`.
+
+Unlike a persistent-process backend, `cursor-agent` exits after every headless
+turn, so continuity comes from the session id in the `result` event. It is stored
+and replayed as `--resume` on the next turn, and exposed via `ResumeToken()`. The
+host persists it and feeds it back through the `resume` setting at construction,
+which is host-injected rather than one of the declared, env-backed settings.
 
 `oneshot` (`CURSOR_STREAM=false` or `CURSOR_KIND=oneshot`) uses
 `--output-format json`, emits no mid-turn events, and does not resume.
 
-Both modes deliver the prompt — recalled memory fenced into a `<memory
-data-only="true">` block, plus any downloaded attachment paths — on stdin only,
-never as argv, and define no provider-specific environment variables: the child
-inherits the parent environment as-is. stderr is discarded unless `Verbose` is
-set, and is never folded into returned errors (it may carry tokens).
+Both modes deliver the prompt on stdin only, never as argv. That prompt is the
+recalled memory fenced into a `<memory data-only="true">` block, plus any
+downloaded attachment paths. Neither mode defines a provider-specific environment
+variable: the child inherits the parent environment as it is.
+
+stderr is discarded unless `Verbose` is set, and it is never folded into a
+returned error, because it may carry tokens.
 
 ## Model catalog
 
 `Models` (`models.go`) is published through `Manifest.Models`, so the host can
-read this backend's catalog without instantiating it. Every entry is route
-`native`: `cursor-agent` answers on the login of the local install and there is
-no way to point it at the product's gateway. A host running under the
-`gateway-only` route policy therefore filters the whole catalog out, and cursor
-disappears from the selector entirely — that is intended, not a packaging bug.
+read this backend's catalog without instantiating it.
+
+Every entry is route `native`. `cursor-agent` answers on the login of the local
+install, and there is no way to point it at the product's gateway. A host running
+under the `gateway-only` route policy therefore filters the whole catalog out and
+cursor disappears from the selector entirely. That is intended, not a packaging
+bug.
 
 ## Development
 
@@ -64,5 +72,7 @@ GOWORK=off go vet ./...
 
 ## Further reading
 
-- [Herrscher docs](https://github.com/Herrscherd/herrscher-docs) — `plugins/backend`
-- [contracts](https://github.com/Herrscherd/herrscher-contracts) — port signatures
+- [Herrscher docs](https://github.com/Herrscherd/herrscher-docs), page
+  `plugins/backend`
+- [contracts](https://github.com/Herrscherd/herrscher-contracts), for the port
+  signatures
