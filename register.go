@@ -20,6 +20,14 @@ func init() {
 				{Key: "kind", Env: "CURSOR_KIND", Help: "backend kind"},
 			},
 			Models: Models,
+			// cursor-agent decides on its own what it is allowed to run and offers
+			// no hook, no prompt and no approval channel to intercept it. Saying so
+			// here is what makes the host warn at create time instead of letting an
+			// operator believe a mode they asked for is being honoured.
+			Capabilities: contracts.Capabilities{
+				Gate:    contracts.GrainNone,
+				GateWhy: "cursor-agent exposes no permission hook",
+			},
 		},
 		Backend: func(ctx context.Context, cfg contracts.PluginConfig) (contracts.Backend, error) {
 			return NewBackend(ctx, Config{
