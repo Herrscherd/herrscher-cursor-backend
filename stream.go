@@ -46,21 +46,25 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 	cmd.Stdin = strings.NewReader(content)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cursor start: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return "", err
+		return "", fmt.Errorf("cursor start: %w", err)
 	}
 	tr, readErr := readTurn(bufio.NewReader(out), onEvent)
+	_, _ = io.Copy(io.Discard, out)
 	waitErr := cmd.Wait()
-	if readErr != nil {
-		return "", readErr
-	}
-	if waitErr != nil {
-		return tr.Text, waitErr
-	}
 	if tr.SessionID != "" {
 		r.session = tr.SessionID
+	}
+	if readErr != nil {
+		if waitErr != nil {
+			return tr.Text, fmt.Errorf("cursor stream: %w (exit: %v)", readErr, waitErr)
+		}
+		return tr.Text, fmt.Errorf("cursor stream: %w", readErr)
+	}
+	if waitErr != nil {
+		return tr.Text, fmt.Errorf("cursor turn: %w", waitErr)
 	}
 	if tr.IsError {
 		return tr.Text, fmt.Errorf("cursor turn failed: %s", tr.ErrMsg)
