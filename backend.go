@@ -141,11 +141,16 @@ type cursorEvent struct {
 }
 
 func readTurn(r *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult, error) {
+	var skipped int
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 {
 			var ev cursorEvent
-			if json.Unmarshal(line, &ev) == nil {
+			if json.Unmarshal(line, &ev) != nil {
+				if strings.TrimSpace(string(line)) != "" {
+					skipped++
+				}
+			} else {
 				switch ev.Type {
 				case "assistant":
 					if onEvent != nil {
@@ -173,7 +178,7 @@ func readTurn(r *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult
 			}
 		}
 		if err != nil {
-			return turnResult{}, err
+			return turnResult{}, fmt.Errorf("cursor stream ended after %d unparsable line(s): %w", skipped, err)
 		}
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,5 +177,89 @@ func TestNewBackendSelection(t *testing.T) {
 	}
 	if _, ok := b.(*streamResponder); !ok {
 		t.Fatalf("backend = %T, want *streamResponder", b)
+	}
+}
+
+func TestBoolSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "absent", value: "", want: true},
+		{name: "false", value: "false", want: false},
+		{name: "zero", value: "0", want: false},
+		{name: "upper false", value: "FALSE", want: false},
+		{name: "padded false", value: " false ", want: false},
+		{name: "true", value: "true", want: true},
+		{name: "one", value: "1", want: true},
+		{name: "garbage", value: "yes-please", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := contracts.PluginConfig{Settings: map[string]string{"stream": tc.value}}
+			if got := boolSetting(cfg, "stream", true); got != tc.want {
+				t.Fatalf("boolSetting(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReadTurnWithoutResultReportsContext(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		input   string
+		skipped int
+	}{
+		{name: "empty", input: "", skipped: 0},
+		{name: "banner only", input: "update available\n", skipped: 1},
+		{name: "banner and truncated json", input: "update available\n{\"type\":\"assis\n", skipped: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := readTurn(bufio.NewReader(strings.NewReader(tc.input)), nil)
+			if !errors.Is(err, io.EOF) {
+				t.Fatalf("err = %v, want wrapped io.EOF", err)
+			}
+			want := fmt.Sprintf("after %d unparsable line(s)", tc.skipped)
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %q, want it to mention %q", err, want)
+			}
+		})
+	}
+}
+
+func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		exitCode   string
+		wantErr    bool
+		wantErrHas string
+	}{
+		{name: "clean exit", exitCode: "0"},
+		{name: "non zero exit", exitCode: "3", wantErr: true, wantErrHas: "exit status 3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			stub := filepath.Join(dir, "stub")
+			script := "#!/bin/sh\ncat > /dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"session_id\":\"sess-9\"}\\n'\nexit " + tc.exitCode + "\n"
+			if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			backend, err := NewBackend(context.Background(), Config{Kind: "stream", Cmd: stub})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := backend.(*streamResponder)
+			_, err = r.Respond(context.Background(), contracts.Prompt{Content: "hi"}, nil)
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrHas) {
+					t.Fatalf("err = %v, want it to mention %q", err, tc.wantErrHas)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if got := r.ResumeToken(); got != "sess-9" {
+				t.Fatalf("ResumeToken = %q, want sess-9", got)
+			}
+		})
 	}
 }
