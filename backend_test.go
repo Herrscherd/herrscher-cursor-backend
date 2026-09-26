@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -164,7 +165,7 @@ func TestReadTurn(t *testing.T) {
 		t.Fatalf("events = %+v, want %+v", events, want)
 	}
 	for i := range want {
-		if events[i] != want[i] {
+		if !reflect.DeepEqual(events[i], want[i]) {
 			t.Fatalf("event[%d] = %+v, want %+v", i, events[i], want[i])
 		}
 	}
