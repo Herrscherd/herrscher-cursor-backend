@@ -15,7 +15,6 @@ import (
 )
 
 type streamResponder struct {
-	ctx     context.Context
 	base    []string
 	model   string
 	dir     string
@@ -29,9 +28,6 @@ var _ contracts.ResumeAware = (*streamResponder)(nil)
 func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEvent func(contracts.BackendEvent)) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if ctx == nil {
-		ctx = r.ctx
-	}
 	content := withContext(p.Context, withAttachments(p.Content, p.Attachments))
 	argv := cursorArgv(r.base, r.model, r.session)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -41,7 +37,7 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 	} else {
 		cmd.Stderr = io.Discard
 	}
-	cmd.Stdin = strings.NewReader(content)
+	cmd.Stdin = promptViaStdin(content)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("cursor start: %w", err)
@@ -50,7 +46,7 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
 	tr, readErr := readTurn(bufio.NewReader(out), onEvent)
-	if _, drainErr := io.Copy(io.Discard, out); drainErr != nil && readErr == nil {
+	if drainErr := drainPipe(out); drainErr != nil && readErr == nil {
 		readErr = drainErr
 	}
 	waitErr := cmd.Wait()
@@ -59,7 +55,7 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 	}
 	if readErr != nil {
 		if waitErr != nil {
-			return tr.Text, fmt.Errorf("cursor stream: %w (exit: %v)", readErr, waitErr)
+			return tr.Text, fmt.Errorf("cursor stream: %w (exit: %w)", readErr, waitErr)
 		}
 		return tr.Text, fmt.Errorf("cursor stream: %w", readErr)
 	}
@@ -82,6 +78,11 @@ func (r *streamResponder) Close() error { return nil }
 
 type turnFailedError struct {
 	message string
+}
+
+func drainPipe(pipe io.Reader) error {
+	_, err := io.Copy(io.Discard, pipe)
+	return err
 }
 
 func (e *turnFailedError) Error() string {

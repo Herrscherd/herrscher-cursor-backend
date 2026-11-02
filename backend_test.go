@@ -2,14 +2,12 @@ package cursor
 
 import (
 	"bufio"
-	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -40,38 +38,45 @@ func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
 		{name: "stream", kind: "stream", format: "stream-json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			argvPath := filepath.Join(t.TempDir(), "argv")
-			t.Setenv("CURSOR_STUB_ARGV", argvPath)
-
-			backend, err := NewBackend(context.Background(), Config{
-				Kind:  tc.kind,
-				Cmd:   stub,
-				Model: model,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := backend.Respond(context.Background(), prompt, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			got, argv := runStubTurn(t, tc.kind, stub, prompt, model)
 			wantResult := fmt.Sprintf("stdin-proof:%d:%x", len(expectedStdin), sha256Bytes(expectedStdin))
 			if got != wantResult {
 				t.Fatalf("result = %q, want %q (stdin was not delivered as expected)", got, wantResult)
 			}
-
-			argvBytes, err := os.ReadFile(argvPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			argv := strings.Fields(string(argvBytes))
-			for _, arg := range argv {
-				if strings.Contains(arg, content) || strings.Contains(arg, memory) {
-					t.Fatalf("prompt data leaked into argv: %q", arg)
-				}
-			}
+			assertNoPromptInArgv(t, argv, content, memory)
 			assertContainsArgs(t, argv, "-p", "--output-format", tc.format, "--model", model)
 		})
+	}
+}
+
+func runStubTurn(t *testing.T, kind, stub string, prompt contracts.Prompt, model string) (string, []string) {
+	t.Helper()
+	argvPath := filepath.Join(t.TempDir(), "argv")
+	t.Setenv("CURSOR_STUB_ARGV", argvPath)
+
+	backend, err := NewBackend(t.Context(), Config{Kind: kind, Cmd: stub, Model: model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := backend.Respond(t.Context(), prompt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argvBytes, err := os.ReadFile(argvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got, strings.Fields(string(argvBytes))
+}
+
+func assertNoPromptInArgv(t *testing.T, argv []string, secrets ...string) {
+	t.Helper()
+	for _, arg := range argv {
+		for _, secret := range secrets {
+			if strings.Contains(arg, secret) {
+				t.Fatalf("prompt data leaked into argv: %q", arg)
+			}
+		}
 	}
 }
 
@@ -162,14 +167,14 @@ func TestReadTurn(t *testing.T) {
 		t.Fatalf("events = %+v, want %+v", events, want)
 	}
 	for i := range want {
-		if !reflect.DeepEqual(events[i], want[i]) {
+		if events[i] != want[i] {
 			t.Fatalf("event[%d] = %+v, want %+v", i, events[i], want[i])
 		}
 	}
 }
 
 func TestNewBackendSelection(t *testing.T) {
-	b, err := NewBackend(nil, Config{Kind: "stream", Cmd: "cursor-agent"})
+	b, err := NewBackend(t.Context(), Config{Kind: "stream", Cmd: "cursor-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,13 +241,8 @@ func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
 		{name: "non zero exit", exitCode: "3", wantErr: true, wantErrHas: "exit status 3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			stub := filepath.Join(dir, "stub")
-			script := "#!/bin/sh\ncat > /dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"session_id\":\"sess-9\"}\\n'\nexit " + tc.exitCode + "\n"
-			if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			backend, err := NewBackend(context.Background(), Config{Kind: "stream", Cmd: stub})
+			stub := writeStreamStub(t, tc.exitCode)
+			backend, err := NewBackend(t.Context(), Config{Kind: "stream", Cmd: stub})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -250,17 +250,34 @@ func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
 			if !ok {
 				t.Fatalf("backend is %T, want *streamResponder", backend)
 			}
-			_, err = r.Respond(context.Background(), contracts.Prompt{Content: "hi"}, nil)
-			if tc.wantErr {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErrHas) {
-					t.Fatalf("err = %v, want it to mention %q", err, tc.wantErrHas)
-				}
-			} else if err != nil {
-				t.Fatal(err)
-			}
+			_, err = r.Respond(t.Context(), contracts.Prompt{Content: "hi"}, nil)
+			assertTurnError(t, err, tc.wantErrHas)
 			if got := r.ResumeToken(); got != "sess-9" {
 				t.Fatalf("ResumeToken = %q, want sess-9", got)
 			}
 		})
+	}
+}
+
+func writeStreamStub(t *testing.T, exitCode string) string {
+	t.Helper()
+	stub := filepath.Join(t.TempDir(), "stub")
+	script := "#!/bin/sh\ncat > /dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"session_id\":\"sess-9\"}\\n'\nexit " + exitCode + "\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return stub
+}
+
+func assertTurnError(t *testing.T, err error, wantErrHas string) {
+	t.Helper()
+	if wantErrHas == "" {
+		if err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if err == nil || !strings.Contains(err.Error(), wantErrHas) {
+		t.Fatalf("err = %v, want it to mention %q", err, wantErrHas)
 	}
 }

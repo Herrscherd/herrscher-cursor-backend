@@ -21,7 +21,7 @@ func init() {
 				{Key: "dir", Env: "CURSOR_DIR", Help: "working directory"},
 				{Key: "kind", Env: "CURSOR_KIND", Help: "backend kind"},
 			},
-			Models: Models,
+			Models: Models(),
 			Capabilities: contracts.Capabilities{
 				Gate:    contracts.GrainNone,
 				GateWhy: "cursor-agent exposes no permission hook",
