@@ -1,6 +1,6 @@
 package cursor
 
-import "github.com/Herrscherd/herrscher-contracts"
+import contracts "github.com/Herrscherd/herrscher-contracts"
 
 // Models is the cursor-agent model catalog. The IDs are those verified live
 // via `cursor-agent models` at commit 3557344 — the previous iteration listed

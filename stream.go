@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 type streamResponder struct {

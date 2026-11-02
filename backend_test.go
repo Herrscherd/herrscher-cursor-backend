@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
