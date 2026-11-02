@@ -25,10 +25,10 @@ type streamResponder struct {
 
 var _ contracts.ResumeAware = (*streamResponder)(nil)
 
-func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEvent func(contracts.BackendEvent)) (string, error) {
+func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, onEvent func(contracts.BackendEvent)) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	content := withContext(p.Context, withAttachments(p.Content, p.Attachments))
+	content := withContext(prompt.Context, withAttachments(prompt.Content, prompt.Attachments))
 	argv := cursorArgv(r.base, r.model, r.session)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = r.dir
@@ -45,27 +45,27 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
-	tr, readErr := readTurn(bufio.NewReader(out), onEvent)
+	turn, readErr := readTurn(bufio.NewReader(out), onEvent)
 	if drainErr := drainPipe(out); drainErr != nil && readErr == nil {
 		readErr = drainErr
 	}
 	waitErr := cmd.Wait()
-	if tr.SessionID != "" {
-		r.session = tr.SessionID
+	if turn.SessionID != "" {
+		r.session = turn.SessionID
 	}
 	if readErr != nil {
 		if waitErr != nil {
-			return tr.Text, fmt.Errorf("cursor stream: %w (exit: %w)", readErr, waitErr)
+			return turn.Text, fmt.Errorf("cursor stream: %w (exit: %w)", readErr, waitErr)
 		}
-		return tr.Text, fmt.Errorf("cursor stream: %w", readErr)
+		return turn.Text, fmt.Errorf("cursor stream: %w", readErr)
 	}
 	if waitErr != nil {
-		return tr.Text, fmt.Errorf("cursor turn: %w", waitErr)
+		return turn.Text, fmt.Errorf("cursor turn: %w", waitErr)
 	}
-	if tr.IsError {
-		return tr.Text, &turnFailedError{message: tr.ErrMsg}
+	if turn.IsError {
+		return turn.Text, &turnFailedError{message: turn.ErrMsg}
 	}
-	return tr.Text, nil
+	return turn.Text, nil
 }
 
 func (r *streamResponder) ResumeToken() string {

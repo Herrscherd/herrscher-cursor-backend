@@ -42,14 +42,14 @@ func resolveBackend(kind string, stream bool) string {
 }
 
 // NewBackend builds a configured Cursor Agent backend.
-func NewBackend(_ context.Context, c Config) (contracts.Backend, error) {
-	kind := resolveBackend(c.Kind, c.Stream)
-	base := streamBase(strings.Fields(c.Cmd))
+func NewBackend(_ context.Context, config Config) (contracts.Backend, error) {
+	kind := resolveBackend(config.Kind, config.Stream)
+	base := streamBase(strings.Fields(config.Cmd))
 	switch kind {
 	case backendKindOneShot:
-		return &oneShotResponder{base: base, model: c.Model, dir: c.Dir, verbose: c.Verbose}, nil
+		return &oneShotResponder{base: base, model: config.Model, dir: config.Dir, verbose: config.Verbose}, nil
 	case backendKindStream:
-		return &streamResponder{base: base, model: c.Model, dir: c.Dir, verbose: c.Verbose, session: c.ResumeID}, nil
+		return &streamResponder{base: base, model: config.Model, dir: config.Dir, verbose: config.Verbose, session: config.ResumeID}, nil
 	default:
 		return nil, &unknownBackendKindError{kind: kind}
 	}
@@ -93,9 +93,9 @@ func runCmd(ctx context.Context, base []string, model, dir string, verbose bool,
 }
 
 func parseResult(out string) string {
-	var ev cursorEvent
-	if json.Unmarshal([]byte(strings.TrimSpace(out)), &ev) == nil && ev.Result != "" {
-		return ev.Result
+	var event cursorEvent
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &event) == nil && event.Result != "" {
+		return event.Result
 	}
 	return strings.TrimSpace(out)
 }
@@ -143,10 +143,10 @@ type cursorEvent struct {
 	ToolCall map[string]json.RawMessage `json:"tool_call"`
 }
 
-func readTurn(r *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult, error) {
+func readTurn(reader *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult, error) {
 	var skipped int
 	for {
-		line, err := r.ReadBytes('\n')
+		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			outcome := consumeLine(line, onEvent)
 			if outcome.done {
@@ -169,47 +169,47 @@ type lineOutcome struct {
 }
 
 func consumeLine(line []byte, onEvent func(contracts.BackendEvent)) lineOutcome {
-	var ev cursorEvent
-	if json.Unmarshal(line, &ev) != nil {
+	var event cursorEvent
+	if json.Unmarshal(line, &event) != nil {
 		return lineOutcome{unparsable: strings.TrimSpace(string(line)) != ""}
 	}
-	tr, done := applyEvent(ev, onEvent)
-	return lineOutcome{turn: tr, done: done}
+	turn, done := applyEvent(event, onEvent)
+	return lineOutcome{turn: turn, done: done}
 }
 
-func applyEvent(ev cursorEvent, onEvent func(contracts.BackendEvent)) (turnResult, bool) {
-	switch ev.Type {
+func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent)) (turnResult, bool) {
+	switch event.Type {
 	case "assistant":
-		emitAssistantText(ev, onEvent)
+		emitAssistantText(event, onEvent)
 	case "tool_call":
-		if ev.Subtype == "started" {
-			emitToolCall(ev, onEvent)
+		if event.Subtype == "started" {
+			emitToolCall(event, onEvent)
 		}
 	case "result":
-		return finishTurn(ev, onEvent), true
+		return finishTurn(event, onEvent), true
 	}
 	return turnResult{}, false
 }
 
-func emitAssistantText(ev cursorEvent, onEvent func(contracts.BackendEvent)) {
-	for _, block := range ev.Message.Content {
+func emitAssistantText(event cursorEvent, onEvent func(contracts.BackendEvent)) {
+	for _, block := range event.Message.Content {
 		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
 			emit(onEvent, contracts.BackendEvent{Kind: "text", Detail: block.Text})
 		}
 	}
 }
 
-func emitToolCall(ev cursorEvent, onEvent func(contracts.BackendEvent)) {
-	emit(onEvent, toolCallEvent(ev.ToolCall))
+func emitToolCall(event cursorEvent, onEvent func(contracts.BackendEvent)) {
+	emit(onEvent, toolCallEvent(event.ToolCall))
 }
 
-func finishTurn(ev cursorEvent, onEvent func(contracts.BackendEvent)) turnResult {
-	tr := turnResult{Text: ev.Result, SessionID: ev.SessionID, IsError: ev.IsError}
-	if ev.IsError {
-		tr.ErrMsg = ev.Result
+func finishTurn(event cursorEvent, onEvent func(contracts.BackendEvent)) turnResult {
+	turn := turnResult{Text: event.Result, SessionID: event.SessionID, IsError: event.IsError}
+	if event.IsError {
+		turn.ErrMsg = event.Result
 	}
-	emit(onEvent, contracts.BackendEvent{Kind: "result", IsError: ev.IsError})
-	return tr
+	emit(onEvent, contracts.BackendEvent{Kind: "result", IsError: event.IsError})
+	return turn
 }
 
 func emit(onEvent func(contracts.BackendEvent), event contracts.BackendEvent) {

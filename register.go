@@ -41,9 +41,9 @@ func init() {
 }
 
 func boolSetting(cfg contracts.PluginConfig, key string, def bool) bool {
-	v, err := strconv.ParseBool(strings.TrimSpace(cfg.Get(key)))
+	value, err := strconv.ParseBool(strings.TrimSpace(cfg.Get(key)))
 	if err != nil {
 		return def
 	}
-	return v
+	return value
 }
