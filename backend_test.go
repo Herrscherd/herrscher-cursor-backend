@@ -23,10 +23,11 @@ func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
 	)
 
 	stub := writeCursorStub(t)
+	attachment := "/tmp/distinctive-attachment.png"
 	prompt := contracts.Prompt{
 		Content:     content,
 		Context:     memory,
-		Attachments: []string{"/tmp/distinctive-attachment.png"},
+		Attachments: []string{attachment},
 	}
 	expectedStdin := withContext(memory, withAttachments(content, prompt.Attachments))
 
@@ -44,7 +45,7 @@ func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
 			if got != wantResult {
 				t.Fatalf("result = %q, want %q (stdin was not delivered as expected)", got, wantResult)
 			}
-			assertNoPromptInArgv(t, argv, content, memory)
+			assertNoPromptInArgv(t, argv, content, memory, attachment)
 			assertContainsArgs(t, argv, "-p", "--output-format", tc.format, "--model", model)
 		})
 	}
@@ -67,7 +68,11 @@ func runStubTurn(t *testing.T, kind BackendKind, stub string, prompt contracts.P
 	if err != nil {
 		t.Fatal(err)
 	}
-	return got, strings.Fields(string(argvBytes))
+	return got, splitArgv(argvBytes)
+}
+
+func splitArgv(record []byte) []string {
+	return strings.Split(strings.TrimSuffix(string(record), "\x00"), "\x00")
 }
 
 func assertNoPromptInArgv(t *testing.T, argv []string, secrets ...string) {
@@ -86,7 +91,7 @@ func writeCursorStub(t *testing.T) string {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "cursor-agent-stub")
 	script := `#!/bin/sh
-printf '%s\n' "$@" > "$CURSOR_STUB_ARGV"
+printf '%s\0' "$@" > "$CURSOR_STUB_ARGV"
 stdin=$(cat)
 length=$(printf '%s' "$stdin" | wc -c | tr -d ' ')
 hash=$(printf '%s' "$stdin" | sha256sum | cut -d ' ' -f 1)
