@@ -56,9 +56,14 @@ returned error, because it may carry tokens. A line of stream output longer than
 than 16 MiB kills the child and ends the turn with an `OutputTooLargeError`, whose
 output is never returned. Both limits are the same cap.
 
-When a stream turn stops reading on a read error, the child is killed before the
-turn returns, so a child that keeps running after an overlong line cannot hold the
-turn open.
+Each turn child starts in its own process group (`Setpgid`, in `process_unix.go`),
+and stopping a turn kills the whole group with `SIGKILL`, not only the direct
+child. A background process the CLI leaves behind therefore dies with the turn
+and cannot hold its stdout open. When a stream turn stops reading on a read
+error, or a `oneshot` turn passes its cap, the group is killed before the turn
+returns. `cmd.WaitDelay` is a backstop for a grandchild that escapes the group.
+Outside Unix (`process_other.go`) the group kill is absent and only the direct
+child is killed.
 
 ## Model catalog
 

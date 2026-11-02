@@ -56,6 +56,26 @@ func TestRespondReturnsDrainError(t *testing.T) {
 	}
 }
 
+func TestRespondWithoutDrainSeamUsesPipeDrain(t *testing.T) {
+	backend, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: writeStreamStub(t, "0")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := backend.(*streamResponder)
+	if !ok {
+		t.Fatalf("backend is %T, want *streamResponder", backend)
+	}
+	r.drain = nil
+
+	got, err := r.Respond(t.Context(), contracts.Prompt{Content: "hi"}, nil)
+	if err != nil {
+		t.Fatalf("Respond error = %v, want nil", err)
+	}
+	if got != "ok" {
+		t.Fatalf("Respond text = %q, want ok", got)
+	}
+}
+
 func TestRespondStopsChildAfterOverlongLine(t *testing.T) {
 	stub := writeStubScript(t, fmt.Sprintf("cat > /dev/null\nhead -c %d /dev/zero\nexec sleep 600", 2*maxStreamLine))
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -71,6 +91,24 @@ func TestRespondStopsChildAfterOverlongLine(t *testing.T) {
 	}
 	if ctx.Err() != nil {
 		t.Fatalf("Respond waited for the child until the deadline: %v", ctx.Err())
+	}
+}
+
+func TestRespondKillsBackgroundChildAfterOverlongLine(t *testing.T) {
+	stub := writeStubScript(t, fmt.Sprintf("cat > /dev/null\nsleep 25 &\nhead -c %d /dev/zero\nexec sleep 600", 2*maxStreamLine))
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	backend, err := NewBackend(ctx, Config{Kind: BackendKindStream, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
+	if _, ok := errors.AsType[*LineTooLongError](err); !ok {
+		t.Fatalf("err = %v, want a line too long error", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("Respond waited for a background child until the deadline: %v", ctx.Err())
 	}
 }
 

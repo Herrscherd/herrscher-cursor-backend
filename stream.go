@@ -42,7 +42,7 @@ func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, 
 	if readErr != nil {
 		stop()
 	}
-	drainErr := r.drain(out)
+	drainErr := r.drainOutput(out)
 	waitErr := cmd.Wait()
 	r.setSession(turn.SessionID)
 	return turn.Text, streamOutcome(turn, readErr, drainErr, waitErr)
@@ -90,6 +90,13 @@ type TurnFailedError struct {
 
 func (e *TurnFailedError) Error() string {
 	return "cursor turn failed: " + e.Message
+}
+
+func (r *streamResponder) drainOutput(pipe io.Reader) error {
+	if r.drain == nil {
+		return drainPipe(pipe)
+	}
+	return r.drain(pipe)
 }
 
 func drainPipe(pipe io.Reader) error {

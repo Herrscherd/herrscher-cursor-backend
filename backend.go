@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
@@ -43,6 +44,7 @@ const (
 	streamKindText  = "stream"
 	defaultCmd      = "cursor-agent"
 	maxStreamLine   = 16 << 20
+	childWaitDelay  = 5 * time.Second
 )
 
 const maxOneShotOutput int64 = maxStreamLine
@@ -205,6 +207,8 @@ func turnInput(p contracts.Prompt) string {
 
 func turnCommand(ctx context.Context, argv []string, dir, prompt string, stderr io.Writer) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	configureChild(cmd)
+	cmd.WaitDelay = childWaitDelay
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stderr = stderr

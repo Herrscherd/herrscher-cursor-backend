@@ -77,6 +77,8 @@ func splitArgv(record []byte) []string {
 	return strings.Split(strings.TrimSuffix(string(record), "\x00"), "\x00")
 }
 
+const promptWindow = 8
+
 func assertNoPromptInArgv(t *testing.T, argv []string, secrets ...string) {
 	t.Helper()
 	joined := strings.Join(argv, " ")
@@ -87,6 +89,12 @@ func assertNoPromptInArgv(t *testing.T, argv []string, secrets ...string) {
 		for _, word := range strings.Fields(secret) {
 			if len(word) > 3 && strings.Contains(joined, word) {
 				t.Fatalf("prompt word %q leaked into argv: %q", word, joined)
+			}
+		}
+		for start := 0; start+promptWindow <= len(secret); start++ {
+			window := secret[start : start+promptWindow]
+			if strings.Contains(joined, window) {
+				t.Fatalf("prompt fragment %q leaked into argv: %q", window, joined)
 			}
 		}
 	}
@@ -323,7 +331,7 @@ printf '\n'`)
 }
 
 func TestOneShotRefusesOutputPastTheCap(t *testing.T) {
-	stub := writeStubScript(t, fmt.Sprintf("cat > /dev/null\nexec head -c %d /dev/zero", maxOneShotOutput+1))
+	stub := writeStubScript(t, "cat > /dev/null\nexec head -c 1073741824 /dev/zero")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	backend, err := NewBackend(ctx, Config{Kind: BackendKindOneShot, Cmd: stub})
@@ -394,4 +402,22 @@ func FuzzConsumeLine(f *testing.F) {
 			t.Fatalf("line %q yields a turn without ending the turn: %+v", line, outcome.turn)
 		}
 	})
+}
+
+func TestOneShotKillsBackgroundChildAfterOverCap(t *testing.T) {
+	stub := writeStubScript(t, "cat > /dev/null\nsleep 25 &\nexec head -c 1073741824 /dev/zero")
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	backend, err := NewBackend(ctx, Config{Kind: BackendKindOneShot, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
+	if _, ok := errors.AsType[*OutputTooLargeError](err); !ok {
+		t.Fatalf("err = %v, want an output too large error", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("Respond waited for a background child until the deadline: %v", ctx.Err())
+	}
 }
