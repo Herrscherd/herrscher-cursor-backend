@@ -50,7 +50,9 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
 	tr, readErr := readTurn(bufio.NewReader(out), onEvent)
-	_, _ = io.Copy(io.Discard, out)
+	if _, drainErr := io.Copy(io.Discard, out); drainErr != nil && readErr == nil {
+		readErr = drainErr
+	}
 	waitErr := cmd.Wait()
 	if tr.SessionID != "" {
 		r.session = tr.SessionID

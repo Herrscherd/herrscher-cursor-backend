@@ -41,10 +41,7 @@ func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			argvPath := filepath.Join(t.TempDir(), "argv")
-			if err := os.Setenv("CURSOR_STUB_ARGV", argvPath); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Unsetenv("CURSOR_STUB_ARGV") })
+			t.Setenv("CURSOR_STUB_ARGV", argvPath)
 
 			backend, err := NewBackend(context.Background(), Config{
 				Kind:  tc.kind,
@@ -249,7 +246,10 @@ func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := backend.(*streamResponder)
+			r, ok := backend.(*streamResponder)
+			if !ok {
+				t.Fatalf("backend is %T, want *streamResponder", backend)
+			}
 			_, err = r.Respond(context.Background(), contracts.Prompt{Content: "hi"}, nil)
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErrHas) {
