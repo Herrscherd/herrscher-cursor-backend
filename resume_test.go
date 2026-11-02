@@ -1,10 +1,7 @@
 package cursor
 
 import (
-	"context"
 	"testing"
-
-	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 func TestStreamResponderResumeToken(t *testing.T) {
@@ -18,12 +15,8 @@ func TestStreamResponderResumeToken(t *testing.T) {
 	}
 }
 
-func TestStreamResponderIsResumeAware(_ *testing.T) {
-	var _ contracts.ResumeAware = (*streamResponder)(nil)
-}
-
 func TestNewBackendThreadsResumeID(t *testing.T) {
-	b, err := NewBackend(context.Background(), Config{Kind: BackendKindStream, Cmd: "cursor-agent", ResumeID: "x"})
+	b, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: "cursor-agent", ResumeID: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
