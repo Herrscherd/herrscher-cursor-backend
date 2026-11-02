@@ -193,8 +193,7 @@ func emitAssistantText(ev cursorEvent, onEvent func(contracts.BackendEvent)) {
 }
 
 func emitToolCall(ev cursorEvent, onEvent func(contracts.BackendEvent)) {
-	tool, detail := toolCallDetail(ev.ToolCall)
-	emit(onEvent, contracts.BackendEvent{Kind: "tool", Tool: tool, Detail: detail})
+	emit(onEvent, toolCallEvent(ev.ToolCall))
 }
 
 func finishTurn(ev cursorEvent, onEvent func(contracts.BackendEvent)) turnResult {
@@ -219,20 +218,24 @@ type turnResult struct {
 	ErrMsg    string
 }
 
-func toolCallDetail(call map[string]json.RawMessage) (string, string) {
+func toolCallEvent(call map[string]json.RawMessage) contracts.BackendEvent {
 	for name, raw := range call {
 		var body struct {
 			Args map[string]any `json:"args"`
 		}
 		if json.Unmarshal(raw, &body) != nil {
-			return name, ""
+			return contracts.BackendEvent{Kind: "tool", Tool: name}
 		}
-		for _, key := range []string{"command", "path", "filePath", "pattern", "query", "url", "description"} {
-			if value, ok := body.Args[key].(string); ok && value != "" {
-				return name, value
-			}
-		}
-		return name, ""
+		return contracts.BackendEvent{Kind: "tool", Tool: name, Detail: toolCallSummary(body.Args)}
 	}
-	return "", ""
+	return contracts.BackendEvent{Kind: "tool"}
+}
+
+func toolCallSummary(args map[string]any) string {
+	for _, key := range []string{"command", "path", "filePath", "pattern", "query", "url", "description"} {
+		if value, ok := args[key].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
 }
