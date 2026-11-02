@@ -2,11 +2,16 @@ package cursor
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
+
+// ErrInvalidSetting reports a setting whose value the factory cannot read.
+var ErrInvalidSetting = errors.New("invalid cursor setting")
 
 func init() {
 	contracts.Register(contracts.Plugin{
@@ -17,9 +22,10 @@ func init() {
 			Config: []contracts.Setting{
 				{Key: "cmd", Env: "CURSOR_CMD", Help: "base command to run Cursor Agent", Default: "cursor-agent"},
 				{Key: "model", Env: "CURSOR_MODEL", Help: "model override"},
-				{Key: "stream", Env: "CURSOR_STREAM", Help: "resume-based stream mode (false/0/off to disable)", Default: "true"},
+				{Key: "stream", Env: "CURSOR_STREAM", Help: "resume-based stream mode (false, 0 or off to disable)", Default: "true"},
 				{Key: "dir", Env: "CURSOR_DIR", Help: "working directory"},
-				{Key: "kind", Env: "CURSOR_KIND", Help: "backend kind"},
+				{Key: "kind", Env: "CURSOR_KIND", Help: "backend kind, oneshot or stream"},
+				{Key: "resume", Help: "session id to resume, fed by the host at construction, never set by an operator"},
 			},
 			Models: Models(),
 			Capabilities: contracts.Capabilities{
@@ -32,9 +38,13 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
+			stream, err := streamSetting(cfg)
+			if err != nil {
+				return nil, err
+			}
 			return NewBackend(ctx, Config{
 				Kind:     kind,
-				Stream:   boolSetting(cfg, "stream", true),
+				Stream:   stream,
 				Cmd:      cfg.Get("cmd"),
 				Model:    cfg.Get("model"),
 				Dir:      cfg.Get("dir"),
@@ -44,12 +54,21 @@ func init() {
 	})
 }
 
-func boolSetting(cfg contracts.PluginConfig, key string, def bool) bool {
-	value, err := strconv.ParseBool(strings.TrimSpace(cfg.Get(key)))
-	if err != nil {
-		return def
+const defaultStream = true
+
+func streamSetting(cfg contracts.PluginConfig) (bool, error) {
+	text := strings.TrimSpace(cfg.Get("stream"))
+	if text == "" {
+		return defaultStream, nil
 	}
-	return value
+	if strings.EqualFold(text, "off") {
+		return false, nil
+	}
+	value, err := strconv.ParseBool(text)
+	if err != nil {
+		return false, fmt.Errorf("%w: stream=%q, want true or false", ErrInvalidSetting, text)
+	}
+	return value, nil
 }
 
 func backendKindSetting(cfg contracts.PluginConfig) (BackendKind, error) {

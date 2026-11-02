@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,7 +16,8 @@ type streamResponder struct {
 	base    []string
 	model   string
 	dir     string
-	verbose bool
+	stderr  io.Writer
+	turns   sync.Mutex
 	mu      sync.Mutex
 	session string
 }
@@ -26,18 +25,9 @@ type streamResponder struct {
 var _ contracts.ResumeAware = (*streamResponder)(nil)
 
 func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, onEvent func(contracts.BackendEvent)) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	content := withContext(prompt.Context, withAttachments(prompt.Content, prompt.Attachments))
-	argv := cursorArgv(r.base, r.model, r.session)
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = r.dir
-	if r.verbose {
-		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = io.Discard
-	}
-	cmd.Stdin = promptViaStdin(content)
+	r.turns.Lock()
+	defer r.turns.Unlock()
+	cmd := turnCommand(ctx, cursorArgv(r.base, r.model, r.ResumeToken()), r.dir, turnInput(prompt), r.stderr)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("cursor start: %w", err)
@@ -46,26 +36,27 @@ func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, 
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
 	turn, readErr := readTurn(bufio.NewReader(out), onEvent)
-	if drainErr := drainPipe(out); drainErr != nil && readErr == nil {
+	drainErr := drainPipe(out)
+	waitErr := cmd.Wait()
+	r.setSession(turn.SessionID)
+	return turn.Text, streamOutcome(turn, readErr, drainErr, waitErr)
+}
+
+func streamOutcome(turn turnResult, readErr, drainErr, waitErr error) error {
+	if readErr == nil {
 		readErr = drainErr
 	}
-	waitErr := cmd.Wait()
-	if turn.SessionID != "" {
-		r.session = turn.SessionID
+	switch {
+	case readErr != nil && waitErr != nil:
+		return fmt.Errorf("cursor stream: %w (exit: %w)", readErr, waitErr)
+	case readErr != nil:
+		return fmt.Errorf("cursor stream: %w", readErr)
+	case waitErr != nil:
+		return fmt.Errorf("cursor turn: %w", waitErr)
+	case turn.IsError:
+		return &TurnFailedError{Message: turn.ErrMsg}
 	}
-	if readErr != nil {
-		if waitErr != nil {
-			return turn.Text, fmt.Errorf("cursor stream: %w (exit: %w)", readErr, waitErr)
-		}
-		return turn.Text, fmt.Errorf("cursor stream: %w", readErr)
-	}
-	if waitErr != nil {
-		return turn.Text, fmt.Errorf("cursor turn: %w", waitErr)
-	}
-	if turn.IsError {
-		return turn.Text, &turnFailedError{message: turn.ErrMsg}
-	}
-	return turn.Text, nil
+	return nil
 }
 
 func (r *streamResponder) ResumeToken() string {
@@ -74,19 +65,30 @@ func (r *streamResponder) ResumeToken() string {
 	return r.session
 }
 
+func (r *streamResponder) setSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.session = sessionID
+}
+
 func (r *streamResponder) Close() error { return nil }
 
-type turnFailedError struct {
-	message string
+// TurnFailedError reports a turn that Cursor Agent ended with an error result.
+// Message is the text of that result.
+type TurnFailedError struct {
+	Message string
+}
+
+func (e *TurnFailedError) Error() string {
+	return "cursor turn failed: " + e.Message
 }
 
 func drainPipe(pipe io.Reader) error {
 	_, err := io.Copy(io.Discard, pipe)
 	return err
-}
-
-func (e *turnFailedError) Error() string {
-	return "cursor turn failed: " + e.message
 }
 
 var memoryFence = regexp.MustCompile(`(?i)<\s*/?\s*memory\s*>`)

@@ -189,30 +189,6 @@ func TestNewBackendSelection(t *testing.T) {
 	}
 }
 
-func TestBoolSetting(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		value string
-		want  bool
-	}{
-		{name: "absent", value: "", want: true},
-		{name: "false", value: "false", want: false},
-		{name: "zero", value: "0", want: false},
-		{name: "upper false", value: "FALSE", want: false},
-		{name: "padded false", value: " false ", want: false},
-		{name: "true", value: "true", want: true},
-		{name: "one", value: "1", want: true},
-		{name: "garbage", value: "yes-please", want: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := contracts.PluginConfig{Settings: map[string]string{"stream": tc.value}}
-			if got := boolSetting(cfg, "stream", true); got != tc.want {
-				t.Fatalf("boolSetting(%q) = %v, want %v", tc.value, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestReadTurnWithoutResultReportsContext(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -228,12 +204,12 @@ func TestReadTurnWithoutResultReportsContext(t *testing.T) {
 			if !errors.Is(err, io.EOF) {
 				t.Fatalf("err = %v, want wrapped io.EOF", err)
 			}
-			ended, ok := errors.AsType[*streamEndedError](err)
+			ended, ok := errors.AsType[*StreamEndedError](err)
 			if !ok {
 				t.Fatalf("err = %v, want a stream ended error", err)
 			}
-			if ended.unparsable != tc.skipped {
-				t.Fatalf("unparsable = %d, want %d", ended.unparsable, tc.skipped)
+			if ended.Unparsable != tc.skipped {
+				t.Fatalf("unparsable = %d, want %d", ended.Unparsable, tc.skipped)
 			}
 		})
 	}
@@ -269,9 +245,13 @@ func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
 
 func writeStreamStub(t *testing.T, exitCode string) string {
 	t.Helper()
+	return writeStubScript(t, "cat > /dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"session_id\":\"sess-9\"}\\n'\nexit "+exitCode)
+}
+
+func writeStubScript(t *testing.T, body string) string {
+	t.Helper()
 	stub := filepath.Join(t.TempDir(), "stub")
-	script := "#!/bin/sh\ncat > /dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"session_id\":\"sess-9\"}\\n'\nexit " + exitCode + "\n"
-	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return stub
@@ -304,7 +284,86 @@ func TestParseBackendKind(t *testing.T) {
 	if err == nil {
 		t.Fatalf("ParseBackendKind accepted an unknown kind as %v", kind)
 	}
-	if _, ok := errors.AsType[*unknownBackendKindError](err); !ok {
+	if _, ok := errors.AsType[*UnknownBackendKindError](err); !ok {
 		t.Fatalf("err = %v, want an unknown backend kind error", err)
 	}
+}
+
+func TestReadTurnRefusesOverlongLine(t *testing.T) {
+	input := strings.Repeat("x", maxStreamLine+1)
+
+	_, err := readTurn(bufio.NewReader(strings.NewReader(input)), nil)
+	tooLong, ok := errors.AsType[*LineTooLongError](err)
+	if !ok {
+		t.Fatalf("err = %v, want a line too long error", err)
+	}
+	if tooLong.Limit != maxStreamLine {
+		t.Fatalf("limit = %d, want %d", tooLong.Limit, maxStreamLine)
+	}
+}
+
+func TestStreamRespondRefusesOverlongLine(t *testing.T) {
+	stub := writeStubScript(t, `cat > /dev/null
+head -c 17000000 /dev/zero | tr '\0' 'x'
+printf '\n'`)
+	backend, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = backend.Respond(t.Context(), contracts.Prompt{Content: "hi"}, nil)
+	if _, ok := errors.AsType[*LineTooLongError](err); !ok {
+		t.Fatalf("err = %v, want a line too long error", err)
+	}
+}
+
+func TestExecErrorDoesNotCarryStderr(t *testing.T) {
+	const secret = "token=sk-do-not-log"
+	for _, tc := range []struct {
+		name string
+		kind BackendKind
+	}{
+		{name: "oneshot", kind: BackendKindOneShot},
+		{name: "stream", kind: BackendKindStream},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := writeStubScript(t, `cat > /dev/null
+printf '{"type":"result","subtype":"success","result":"ok","session_id":"sess-9"}\n'
+printf '`+secret+`\n' >&2
+exit 3`)
+			backend, err := NewBackend(t.Context(), Config{Kind: tc.kind, Cmd: stub})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = backend.Respond(t.Context(), contracts.Prompt{Content: "hi"}, nil)
+			exitErr, ok := errors.AsType[*exec.ExitError](err)
+			if !ok {
+				t.Fatalf("err = %v, want an exit error", err)
+			}
+			if len(exitErr.Stderr) != 0 {
+				t.Fatalf("ExitError.Stderr = %q, want empty", exitErr.Stderr)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("error text carries stderr: %v", err)
+			}
+		})
+	}
+}
+
+func FuzzConsumeLine(f *testing.F) {
+	for _, line := range []string{
+		`{"type":"system","subtype":"init","session_id":"sess-1"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]},"session_id":"sess-1"}`,
+		`{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"README.md"}}},"session_id":"sess-1"}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"Hello","session_id":"sess-1"}`,
+		"update available",
+		`{"type":"assis`,
+	} {
+		f.Add([]byte(line))
+	}
+	f.Fuzz(func(t *testing.T, line []byte) {
+		outcome := consumeLine(line, func(contracts.BackendEvent) {})
+		if outcome.isDone && outcome.isUnparsable {
+			t.Fatalf("line %q is both the result and unparsable", line)
+		}
+	})
 }

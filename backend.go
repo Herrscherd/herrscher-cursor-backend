@@ -3,8 +3,10 @@ package cursor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,7 +28,8 @@ type Config struct {
 	ResumeID string
 }
 
-// BackendKind selects how a turn reaches Cursor Agent.
+// BackendKind selects how a turn reaches Cursor Agent. The zero value means the
+// kind is not chosen: [NewBackend] then derives it from [Config.Stream].
 type BackendKind uint8
 
 // The closed set of backend kinds.
@@ -38,9 +41,23 @@ const (
 const (
 	oneShotKindText = "oneshot"
 	streamKindText  = "stream"
+	defaultCmd      = "cursor-agent"
+	maxStreamLine   = 16 << 20
 )
 
-// ParseBackendKind reads the text form of a BackendKind.
+// UnknownBackendKindError reports a kind that is neither oneshot nor stream.
+type UnknownBackendKindError struct {
+	Kind string
+}
+
+func (e *UnknownBackendKindError) Error() string {
+	return fmt.Sprintf("unknown backend kind %q", e.Kind)
+}
+
+// ParseBackendKind reads the text form of a BackendKind, "oneshot" or "stream".
+//
+// It returns an [*UnknownBackendKindError] for any other text, the empty text
+// included: the zero value has no text form that parses back.
 func ParseBackendKind(text string) (BackendKind, error) {
 	switch text {
 	case oneShotKindText:
@@ -48,7 +65,7 @@ func ParseBackendKind(text string) (BackendKind, error) {
 	case streamKindText:
 		return BackendKindStream, nil
 	}
-	return 0, &unknownBackendKindError{kind: text}
+	return 0, &UnknownBackendKindError{Kind: text}
 }
 
 func (k BackendKind) String() string {
@@ -61,66 +78,98 @@ func (k BackendKind) String() string {
 	return fmt.Sprintf("BackendKind(%d)", uint8(k))
 }
 
+// MarshalText writes the text form of k. The zero value writes empty text, which
+// [BackendKind.UnmarshalText] reads back as the zero value.
+func (k BackendKind) MarshalText() ([]byte, error) {
+	switch k {
+	case 0:
+		return nil, nil
+	case BackendKindOneShot, BackendKindStream:
+		return []byte(k.String()), nil
+	}
+	return nil, &UnknownBackendKindError{Kind: k.String()}
+}
+
+// UnmarshalText reads the text form of a kind. Empty text sets the zero value,
+// any other text goes through [ParseBackendKind].
+func (k *BackendKind) UnmarshalText(text []byte) error {
+	if len(text) == 0 {
+		*k = 0
+		return nil
+	}
+	parsed, err := ParseBackendKind(string(text))
+	if err != nil {
+		return err
+	}
+	*k = parsed
+	return nil
+}
+
 const eventKindTool = "tool"
 
-func resolveBackend(kind BackendKind, stream bool) BackendKind {
-	if kind != 0 {
-		return kind
-	}
-	if stream {
+func resolveBackend(config Config) BackendKind {
+	switch {
+	case config.Kind != 0:
+		return config.Kind
+	case config.Stream:
 		return BackendKindStream
 	}
 	return BackendKindOneShot
 }
 
-// NewBackend builds a configured Cursor Agent backend.
+// NewBackend builds a configured Cursor Agent backend. Config.Cmd is split on
+// spaces, and an empty Cmd runs cursor-agent. It does not start Cursor Agent.
+//
+// It returns an [*UnknownBackendKindError] when Config.Kind is neither zero nor
+// a defined kind.
 func NewBackend(_ context.Context, config Config) (contracts.Backend, error) {
-	kind := resolveBackend(config.Kind, config.Stream)
-	base := streamBase(strings.Fields(config.Cmd))
+	base := baseCommand(config.Cmd)
+	stderr := diagnosticsOutput(config)
+	kind := resolveBackend(config)
 	switch kind {
 	case BackendKindOneShot:
-		return &oneShotResponder{base: base, model: config.Model, dir: config.Dir, verbose: config.Verbose}, nil
+		return &oneShotResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr}, nil
 	case BackendKindStream:
-		return &streamResponder{base: base, model: config.Model, dir: config.Dir, verbose: config.Verbose, session: config.ResumeID}, nil
+		return &streamResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr, session: config.ResumeID}, nil
 	}
-	return nil, &unknownBackendKindError{kind: kind.String()}
+	return nil, &UnknownBackendKindError{Kind: kind.String()}
 }
 
-type unknownBackendKindError struct {
-	kind string
-}
-
-func (e *unknownBackendKindError) Error() string {
-	return fmt.Sprintf("unknown backend kind %q", e.kind)
+func diagnosticsOutput(config Config) io.Writer {
+	if config.Verbose {
+		return os.Stderr
+	}
+	return io.Discard
 }
 
 type oneShotResponder struct {
-	base    []string
-	model   string
-	dir     string
-	verbose bool
+	base   []string
+	model  string
+	dir    string
+	stderr io.Writer
 }
 
 func (o *oneShotResponder) Respond(ctx context.Context, p contracts.Prompt, _ func(contracts.BackendEvent)) (string, error) {
-	return runCmd(ctx, o.base, o.model, o.dir, o.verbose, p)
-}
-
-func (o *oneShotResponder) Close() error { return nil }
-
-func runCmd(ctx context.Context, base []string, model, dir string, verbose bool, p contracts.Prompt) (string, error) {
-	content := withContext(p.Context, withAttachments(p.Content, p.Attachments))
-	argv := baseArgv(base, "json", model, "")
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = dir
-	cmd.Stdin = promptViaStdin(content)
-	if verbose {
-		cmd.Stderr = os.Stderr
-	}
+	cmd := turnCommand(ctx, baseArgv(o.base, "json", o.model, ""), o.dir, turnInput(p), o.stderr)
 	out, err := cmd.Output()
 	if err != nil {
 		return parseResult(string(out)), fmt.Errorf("cursor exec failed: %w", err)
 	}
 	return parseResult(string(out)), nil
+}
+
+func (o *oneShotResponder) Close() error { return nil }
+
+func turnInput(p contracts.Prompt) string {
+	return withContext(p.Context, withAttachments(p.Content, p.Attachments))
+}
+
+func turnCommand(ctx context.Context, argv []string, dir, prompt string, stderr io.Writer) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Stderr = stderr
+	return cmd
 }
 
 func parseResult(out string) string {
@@ -131,15 +180,12 @@ func parseResult(out string) string {
 	return strings.TrimSpace(out)
 }
 
-func streamBase(fields []string) []string {
+func baseCommand(cmd string) []string {
+	fields := strings.Fields(cmd)
 	if len(fields) == 0 {
-		return []string{"cursor-agent"}
+		return []string{defaultCmd}
 	}
 	return fields
-}
-
-func promptViaStdin(prompt string) io.Reader {
-	return strings.NewReader(prompt)
 }
 
 func cursorArgv(base []string, model, resume string) []string {
@@ -147,8 +193,7 @@ func cursorArgv(base []string, model, resume string) []string {
 }
 
 func baseArgv(base []string, format, model, resume string) []string {
-	b := streamBase(base)
-	argv := slices.Clone(b)
+	argv := slices.Clone(base)
 	argv = append(argv, "-p", "--output-format", format)
 	if model != "" {
 		argv = append(argv, "--model", model)
@@ -174,51 +219,80 @@ type cursorEvent struct {
 	ToolCall map[string]json.RawMessage `json:"tool_call"`
 }
 
+// LineTooLongError reports a line of the stream longer than the reader accepts.
+type LineTooLongError struct {
+	Limit int
+}
+
+func (e *LineTooLongError) Error() string {
+	return fmt.Sprintf("cursor stream line is longer than %d bytes", e.Limit)
+}
+
+// StreamEndedError reports that the stream ended before its result event.
+// Unparsable counts the non-empty lines that were not JSON, and Cause is the
+// read error that ended the stream.
+type StreamEndedError struct {
+	Unparsable int
+	Cause      error
+}
+
+func (e *StreamEndedError) Error() string {
+	return fmt.Sprintf("cursor stream ended after %d unparsable line(s): %v", e.Unparsable, e.Cause)
+}
+
+func (e *StreamEndedError) Unwrap() error {
+	return e.Cause
+}
+
 func readTurn(reader *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult, error) {
 	var skipped int
 	for {
-		line, err := reader.ReadBytes('\n')
+		line, err := readLine(reader)
+		if _, isTooLong := errors.AsType[*LineTooLongError](err); isTooLong {
+			return turnResult{}, err
+		}
 		if len(line) > 0 {
 			outcome := consumeLine(line, onEvent)
-			if outcome.done {
+			if outcome.isDone {
 				return outcome.turn, nil
 			}
-			if outcome.unparsable {
+			if outcome.isUnparsable {
 				skipped++
 			}
 		}
 		if err != nil {
-			return turnResult{}, &streamEndedError{unparsable: skipped, cause: err}
+			return turnResult{}, &StreamEndedError{Unparsable: skipped, Cause: err}
 		}
 	}
 }
 
-type streamEndedError struct {
-	unparsable int
-	cause      error
-}
-
-func (e *streamEndedError) Error() string {
-	return fmt.Sprintf("cursor stream ended after %d unparsable line(s): %v", e.unparsable, e.cause)
-}
-
-func (e *streamEndedError) Unwrap() error {
-	return e.cause
+func readLine(reader *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if len(line)+len(chunk) > maxStreamLine {
+			return nil, &LineTooLongError{Limit: maxStreamLine}
+		}
+		line = append(line, chunk...)
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return line, err
+		}
+	}
 }
 
 type lineOutcome struct {
-	turn       turnResult
-	done       bool
-	unparsable bool
+	turn         turnResult
+	isDone       bool
+	isUnparsable bool
 }
 
 func consumeLine(line []byte, onEvent func(contracts.BackendEvent)) lineOutcome {
 	var event cursorEvent
 	if json.Unmarshal(line, &event) != nil {
-		return lineOutcome{unparsable: strings.TrimSpace(string(line)) != ""}
+		return lineOutcome{isUnparsable: len(bytes.TrimSpace(line)) != 0}
 	}
-	turn, done := applyEvent(event, onEvent)
-	return lineOutcome{turn: turn, done: done}
+	turn, isDone := applyEvent(event, onEvent)
+	return lineOutcome{turn: turn, isDone: isDone}
 }
 
 func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent)) (turnResult, bool) {

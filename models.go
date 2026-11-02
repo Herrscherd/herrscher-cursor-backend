@@ -2,16 +2,11 @@ package cursor
 
 import contracts "github.com/Herrscherd/herrscher-contracts"
 
-// Models is the cursor-agent model catalog. The IDs are those verified live
-// via `cursor-agent models` at commit 3557344; the previous iteration listed
-// nonexistent models, which produced "Cannot use this model" at startup.
-//
-// Effort is encoded IN the ID (suffix -high, -thinking-…): no separate axis,
-// so Efforts is empty everywhere.
-//
-// All entries are on native route: cursor-agent exposes no redirection lever.
-// The public build, which accepts only gateway route, eliminates them all
-// without special handling.
+// Models is the cursor-agent model catalogue published through Manifest.Models.
+// Each ID is also the Arg passed to cursor-agent --model. Effort is part of the
+// ID (a suffix such as -high or -thinking-high), so no entry declares efforts.
+// Every entry uses the native route, since cursor-agent has no redirection
+// lever; a gateway-only host filters the whole catalogue out.
 func Models() []contracts.ModelSpec {
 	return []contracts.ModelSpec{
 		{ID: "auto", Label: "Auto", Arg: "auto", Route: contracts.RouteNative},

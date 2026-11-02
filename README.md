@@ -22,9 +22,13 @@ herrscher plugin add github.com/Herrscherd/herrscher-cursor-backend
 |---|---|---|
 | `CURSOR_CMD` | `cursor-agent` | the binary to run |
 | `CURSOR_MODEL` | | the model a session gets when it names none |
-| `CURSOR_STREAM` | `true` | `false` selects the oneshot mode |
+| `CURSOR_STREAM` | `true` | `true` selects stream mode; `false`, `0` or `off` select oneshot. Any other value fails the factory at start. |
 | `CURSOR_DIR` | | the working directory the CLI runs in |
-| `CURSOR_KIND` | | `stream` or `oneshot`, the explicit form of `CURSOR_STREAM` |
+| `CURSOR_KIND` | | `stream` or `oneshot`, the explicit form of `CURSOR_STREAM`; when set it takes precedence |
+
+The `resume` setting is declared in the manifest with no environment variable.
+The host feeds it at construction from the session it persisted, and an operator
+does not set it.
 
 ## Two modes
 
@@ -36,7 +40,7 @@ Unlike a persistent-process backend, `cursor-agent` exits after every headless
 turn, so continuity comes from the session id in the `result` event. It is stored
 and replayed as `--resume` on the next turn, and exposed via `ResumeToken()`. The
 host persists it and feeds it back through the `resume` setting at construction,
-which is host-injected rather than one of the declared, env-backed settings.
+which is why `resume` has no environment variable.
 
 `oneshot` (`CURSOR_STREAM=false` or `CURSOR_KIND=oneshot`) uses
 `--output-format json`, emits no mid-turn events, and does not resume.
@@ -47,7 +51,8 @@ downloaded attachment paths. Neither mode defines a provider-specific environmen
 variable: the child inherits the parent environment as it is.
 
 stderr is discarded unless `Verbose` is set, and it is never folded into a
-returned error, because it may carry tokens.
+returned error, because it may carry tokens. A line of stream output longer than
+16 MiB ends the turn with a `LineTooLongError`.
 
 ## Model catalog
 
@@ -63,11 +68,19 @@ bug.
 ## Development
 
 This module sits outside the parent `go.work`, so local commands need
-`GOWORK=off`.
+`GOWORK=off`. It has two kinds of package:
+
+- the root `cursor` package, the plugin module compiled into the herrscher host;
+- `tools/commentcheck`, build tooling that refuses comments outside the
+  allowed set (exported docs, known `//go:` directives, example outputs). It is
+  not linked into the plugin.
+
+`scripts/check.sh` is the gate: module tidiness, golangci-lint v2.15.0, the
+comment check, a from-scratch `go generate` diff, the dash check, the race tests,
+a `CGO_ENABLED=0` build and govulncheck. Run it with `GOWORK=off`.
 
 ```bash
-GOWORK=off go test -race ./...
-GOWORK=off go vet ./...
+GOWORK=off scripts/check.sh
 ```
 
 ## Further reading
