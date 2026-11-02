@@ -120,7 +120,7 @@ func TestRegisteredFactoryReadsSettings(t *testing.T) {
 		{name: "stream off is oneshot", settings: map[string]string{"stream": "off"}, wantResponder: "oneshot"},
 		{name: "kind wins over stream", settings: map[string]string{"kind": "stream", "stream": "off"}, wantResponder: "stream"},
 		{name: "unreadable stream fails", settings: map[string]string{"stream": "garbage"}, wantErr: ErrInvalidSetting},
-		{name: "unknown kind fails", settings: map[string]string{"kind": "batch"}, wantUnknown: true},
+		{name: "unknown kind fails", settings: map[string]string{"kind": "batch"}, wantErr: ErrInvalidSetting, wantUnknown: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checkRegisteredFactory(t, plugin, tc.settings, tc.wantResponder, tc.wantErr, tc.wantUnknown)
@@ -131,16 +131,15 @@ func TestRegisteredFactoryReadsSettings(t *testing.T) {
 func checkRegisteredFactory(t *testing.T, plugin contracts.Plugin, settings map[string]string, wantResponder string, wantErr error, wantUnknown bool) {
 	t.Helper()
 	backend, err := plugin.Backend(t.Context(), contracts.PluginConfig{Settings: settings})
-	if wantErr != nil {
-		if !errors.Is(err, wantErr) {
-			t.Fatalf("factory error = %v, want %v", err, wantErr)
-		}
-		return
+	if wantErr != nil && !errors.Is(err, wantErr) {
+		t.Fatalf("factory error = %v, want %v", err, wantErr)
 	}
 	if wantUnknown {
 		if _, ok := errors.AsType[*UnknownBackendKindError](err); !ok {
 			t.Fatalf("factory error = %v, want an unknown backend kind error", err)
 		}
+	}
+	if wantErr != nil {
 		return
 	}
 	if err != nil {

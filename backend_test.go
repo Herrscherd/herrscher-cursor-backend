@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
@@ -77,10 +79,14 @@ func splitArgv(record []byte) []string {
 
 func assertNoPromptInArgv(t *testing.T, argv []string, secrets ...string) {
 	t.Helper()
-	for _, arg := range argv {
-		for _, secret := range secrets {
-			if strings.Contains(arg, secret) {
-				t.Fatalf("prompt data leaked into argv: %q", arg)
+	joined := strings.Join(argv, " ")
+	for _, secret := range secrets {
+		if strings.Contains(joined, secret) {
+			t.Fatalf("prompt data leaked into argv: %q", joined)
+		}
+		for _, word := range strings.Fields(secret) {
+			if len(word) > 3 && strings.Contains(joined, word) {
+				t.Fatalf("prompt word %q leaked into argv: %q", word, joined)
 			}
 		}
 	}
@@ -316,6 +322,28 @@ printf '\n'`)
 	}
 }
 
+func TestOneShotRefusesOutputPastTheCap(t *testing.T) {
+	stub := writeStubScript(t, fmt.Sprintf("cat > /dev/null\nexec head -c %d /dev/zero", maxOneShotOutput+1))
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	backend, err := NewBackend(ctx, Config{Kind: BackendKindOneShot, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
+	tooLarge, ok := errors.AsType[*OutputTooLargeError](err)
+	if !ok {
+		t.Fatalf("err = %v, want an output too large error", err)
+	}
+	if tooLarge.Limit != maxOneShotOutput {
+		t.Fatalf("limit = %d, want %d", tooLarge.Limit, maxOneShotOutput)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("Respond waited for the child until the deadline: %v", ctx.Err())
+	}
+}
+
 func TestExecErrorDoesNotCarryStderr(t *testing.T) {
 	const secret = "token=sk-do-not-log"
 	for _, tc := range []struct {
@@ -362,8 +390,8 @@ func FuzzConsumeLine(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, line []byte) {
 		outcome := consumeLine(line, func(contracts.BackendEvent) {})
-		if outcome.isDone && outcome.isUnparsable {
-			t.Fatalf("line %q is both the result and unparsable", line)
+		if !outcome.isDone && outcome.turn != (turnResult{}) {
+			t.Fatalf("line %q yields a turn without ending the turn: %+v", line, outcome.turn)
 		}
 	})
 }

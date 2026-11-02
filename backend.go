@@ -45,6 +45,8 @@ const (
 	maxStreamLine   = 16 << 20
 )
 
+const maxOneShotOutput int64 = maxStreamLine
+
 // UnknownBackendKindError reports a kind that is neither oneshot nor stream.
 type UnknownBackendKindError struct {
 	Kind string
@@ -130,7 +132,7 @@ func NewBackend(_ context.Context, config Config) (contracts.Backend, error) {
 	case BackendKindOneShot:
 		return &oneShotResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr}, nil
 	case BackendKindStream:
-		return &streamResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr, session: config.ResumeID}, nil
+		return &streamResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr, drain: drainPipe, session: config.ResumeID}, nil
 	}
 	return nil, &UnknownBackendKindError{Kind: kind.String()}
 }
@@ -149,13 +151,50 @@ type oneShotResponder struct {
 	stderr io.Writer
 }
 
-func (o *oneShotResponder) Respond(ctx context.Context, p contracts.Prompt, _ func(contracts.BackendEvent)) (string, error) {
-	cmd := turnCommand(ctx, baseArgv(o.base, "json", o.model, ""), o.dir, turnInput(p), o.stderr)
-	out, err := cmd.Output()
+// OutputTooLargeError reports a oneshot turn whose stdout is longer than Limit
+// bytes. The child is killed, its output is not read further.
+type OutputTooLargeError struct {
+	Limit int64
+}
+
+func (e *OutputTooLargeError) Error() string {
+	return fmt.Sprintf("cursor output is longer than %d bytes", e.Limit)
+}
+
+func (o *oneShotResponder) Respond(ctx context.Context, prompt contracts.Prompt, _ func(contracts.BackendEvent)) (string, error) {
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	cmd := turnCommand(runCtx, baseArgv(o.base, "json", o.model, ""), o.dir, turnInput(prompt), o.stderr)
+	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return parseResult(string(out)), fmt.Errorf("cursor exec failed: %w", err)
+		return "", fmt.Errorf("cursor start: %w", err)
 	}
-	return parseResult(string(out)), nil
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("cursor start: %w", err)
+	}
+	stdout, readErr := readBounded(out, maxOneShotOutput)
+	if readErr != nil {
+		stop()
+	}
+	waitErr := cmd.Wait()
+	if readErr != nil {
+		return "", fmt.Errorf("cursor exec failed: %w", readErr)
+	}
+	if waitErr != nil {
+		return parseResult(string(stdout)), fmt.Errorf("cursor exec failed: %w", waitErr)
+	}
+	return parseResult(string(stdout)), nil
+}
+
+func readBounded(pipe io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(pipe, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, &OutputTooLargeError{Limit: limit}
+	}
+	return data, nil
 }
 
 func (o *oneShotResponder) Close() error { return nil }

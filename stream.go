@@ -17,6 +17,7 @@ type streamResponder struct {
 	model   string
 	dir     string
 	stderr  io.Writer
+	drain   func(io.Reader) error
 	turns   sync.Mutex
 	mu      sync.Mutex
 	session string
@@ -27,7 +28,9 @@ var _ contracts.ResumeAware = (*streamResponder)(nil)
 func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, onEvent func(contracts.BackendEvent)) (string, error) {
 	r.turns.Lock()
 	defer r.turns.Unlock()
-	cmd := turnCommand(ctx, cursorArgv(r.base, r.model, r.ResumeToken()), r.dir, turnInput(prompt), r.stderr)
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	cmd := turnCommand(runCtx, cursorArgv(r.base, r.model, r.ResumeToken()), r.dir, turnInput(prompt), r.stderr)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("cursor start: %w", err)
@@ -36,7 +39,10 @@ func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, 
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
 	turn, readErr := readTurn(bufio.NewReader(out), onEvent)
-	drainErr := drainPipe(out)
+	if readErr != nil {
+		stop()
+	}
+	drainErr := r.drain(out)
 	waitErr := cmd.Wait()
 	r.setSession(turn.SessionID)
 	return turn.Text, streamOutcome(turn, readErr, drainErr, waitErr)

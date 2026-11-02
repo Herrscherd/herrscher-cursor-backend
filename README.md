@@ -52,7 +52,13 @@ variable: the child inherits the parent environment as it is.
 
 stderr is discarded unless `Verbose` is set, and it is never folded into a
 returned error, because it may carry tokens. A line of stream output longer than
-16 MiB ends the turn with a `LineTooLongError`.
+16 MiB ends the turn with a `LineTooLongError`. Stdout of a `oneshot` turn longer
+than 16 MiB kills the child and ends the turn with an `OutputTooLargeError`, whose
+output is never returned. Both limits are the same cap.
+
+When a stream turn stops reading on a read error, the child is killed before the
+turn returns, so a child that keeps running after an overlong line cannot hold the
+turn open.
 
 ## Model catalog
 

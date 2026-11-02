@@ -76,5 +76,9 @@ func backendKindSetting(cfg contracts.PluginConfig) (BackendKind, error) {
 	if text == "" {
 		return 0, nil
 	}
-	return ParseBackendKind(text)
+	kind, err := ParseBackendKind(text)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrInvalidSetting, err)
+	}
+	return kind, nil
 }
