@@ -34,11 +34,6 @@ func TestGatewayOnlyEliminatesCursor(t *testing.T) {
 	}
 }
 
-// TestManifestPublishesModels pins Manifest.Models on the registered plugin.
-// Deleting the "Models: Models" line in register.go was green: the catalog
-// tests above all call the Models catalog function directly and never look at
-// what the host actually receives from the registry. The consequence is a
-// silently empty cursor selector. claude and codex both carry this test.
 func TestManifestPublishesModels(t *testing.T) {
 	var found bool
 	for _, p := range contracts.Default.Backends() {
