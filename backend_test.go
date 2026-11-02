@@ -223,9 +223,12 @@ func TestReadTurnWithoutResultReportsContext(t *testing.T) {
 			if !errors.Is(err, io.EOF) {
 				t.Fatalf("err = %v, want wrapped io.EOF", err)
 			}
-			want := fmt.Sprintf("after %d unparsable line(s)", tc.skipped)
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("err = %q, want it to mention %q", err, want)
+			ended, ok := errors.AsType[*streamEndedError](err)
+			if !ok {
+				t.Fatalf("err = %v, want a stream ended error", err)
+			}
+			if ended.unparsable != tc.skipped {
+				t.Fatalf("unparsable = %d, want %d", ended.unparsable, tc.skipped)
 			}
 		})
 	}

@@ -188,9 +188,22 @@ func readTurn(reader *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnR
 			}
 		}
 		if err != nil {
-			return turnResult{}, fmt.Errorf("cursor stream ended after %d unparsable line(s): %w", skipped, err)
+			return turnResult{}, &streamEndedError{unparsable: skipped, cause: err}
 		}
 	}
+}
+
+type streamEndedError struct {
+	unparsable int
+	cause      error
+}
+
+func (e *streamEndedError) Error() string {
+	return fmt.Sprintf("cursor stream ended after %d unparsable line(s): %v", e.unparsable, e.cause)
+}
+
+func (e *streamEndedError) Unwrap() error {
+	return e.cause
 }
 
 type lineOutcome struct {
