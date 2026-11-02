@@ -1,3 +1,4 @@
+// Package cursor runs the Cursor Agent CLI as a herrscher backend.
 package cursor
 
 import (
@@ -147,11 +148,11 @@ func readTurn(r *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 {
-			tr, done, unparsable := consumeLine(line, onEvent)
-			if done {
-				return tr, nil
+			outcome := consumeLine(line, onEvent)
+			if outcome.done {
+				return outcome.turn, nil
 			}
-			if unparsable {
+			if outcome.unparsable {
 				skipped++
 			}
 		}
@@ -161,13 +162,19 @@ func readTurn(r *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult
 	}
 }
 
-func consumeLine(line []byte, onEvent func(contracts.BackendEvent)) (turnResult, bool, bool) {
+type lineOutcome struct {
+	turn       turnResult
+	done       bool
+	unparsable bool
+}
+
+func consumeLine(line []byte, onEvent func(contracts.BackendEvent)) lineOutcome {
 	var ev cursorEvent
 	if json.Unmarshal(line, &ev) != nil {
-		return turnResult{}, false, strings.TrimSpace(string(line)) != ""
+		return lineOutcome{unparsable: strings.TrimSpace(string(line)) != ""}
 	}
 	tr, done := applyEvent(ev, onEvent)
-	return tr, done, false
+	return lineOutcome{turn: tr, done: done}
 }
 
 func applyEvent(ev cursorEvent, onEvent func(contracts.BackendEvent)) (turnResult, bool) {

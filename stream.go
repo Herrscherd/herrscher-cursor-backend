@@ -105,18 +105,13 @@ func withAttachments(text string, paths []string) string {
 	if len(paths) == 0 {
 		return text
 	}
-	var b strings.Builder
-	b.WriteString(text)
-	if text != "" {
-		b.WriteString("\n\n")
+	markers := make([]string, 0, len(paths))
+	for _, path := range paths {
+		markers = append(markers, "[Image jointe : "+path+"]")
 	}
-	for i, path := range paths {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString("[Image jointe : ")
-		b.WriteString(path)
-		b.WriteByte(']')
+	attachments := strings.Join(markers, "\n")
+	if text == "" {
+		return attachments
 	}
-	return b.String()
+	return text + "\n\n" + attachments
 }
