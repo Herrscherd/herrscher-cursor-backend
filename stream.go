@@ -15,8 +15,6 @@ import (
 )
 
 type streamResponder struct {
-	// ctx is the backend-lifetime context captured at NewBackend; it is used
-	// only as a fallback when Respond is called with a nil ctx.
 	ctx     context.Context
 	base    []string
 	model   string
@@ -26,6 +24,8 @@ type streamResponder struct {
 	session string
 }
 
+var _ contracts.ResumeAware = (*streamResponder)(nil)
+
 func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEvent func(contracts.BackendEvent)) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -33,11 +33,9 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 		ctx = r.ctx
 	}
 	content := withContext(p.Context, withAttachments(p.Content, p.Attachments))
-	// Prompt delivered on stdin only (see baseArgv); not passed as argv.
 	argv := cursorArgv(r.base, r.model, r.session)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = r.dir
-	// cmd.Env left nil so the child inherits the parent environment directly.
 	if r.verbose {
 		cmd.Stderr = os.Stderr
 	} else {
@@ -72,10 +70,6 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 	return tr.Text, nil
 }
 
-// ResumeToken returns the cursor session id for this conversation — the id fed
-// back to cursor-agent via --resume — for the host to persist and replay across
-// restarts. Before the first turn it returns the id supplied at construction.
-// Implements contracts.ResumeAware.
 func (r *streamResponder) ResumeToken() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

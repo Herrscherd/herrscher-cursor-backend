@@ -20,7 +20,7 @@ type Config struct {
 	Model    string
 	Dir      string
 	Verbose  bool
-	ResumeID string // cursor session id to resume on the first turn ("" = fresh)
+	ResumeID string
 }
 
 func resolveBackend(kind string, stream bool) string {
@@ -51,8 +51,6 @@ func NewBackend(ctx context.Context, c Config) (contracts.Backend, error) {
 }
 
 type oneShotResponder struct {
-	// ctx is the backend-lifetime context captured at NewBackend; it is used
-	// only as a fallback when Respond is called with a nil ctx.
 	ctx     context.Context
 	base    []string
 	model   string
@@ -71,20 +69,15 @@ func (o *oneShotResponder) Close() error { return nil }
 
 func runCmd(ctx context.Context, base []string, model, dir string, verbose bool, p contracts.Prompt) (string, error) {
 	content := withContext(p.Context, withAttachments(p.Content, p.Attachments))
-	// The prompt is delivered on stdin only; it is deliberately not passed as an
-	// argv element to avoid ARG_MAX limits and exposure via /proc/<pid>/cmdline.
 	argv := baseArgv(base, "json", model, "")
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(content)
-	// cmd.Env left nil so the child inherits the parent environment directly.
 	if verbose {
 		cmd.Stderr = os.Stderr
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		// stderr may carry secrets (tokens, authed URLs); never fold it into the
-		// error string. Under verbose it is already streamed to os.Stderr.
 		return parseResult(string(out)), fmt.Errorf("cursor exec failed: %w", err)
 	}
 	return parseResult(string(out)), nil
@@ -109,8 +102,6 @@ func cursorArgv(base []string, model, resume string) []string {
 	return baseArgv(base, "stream-json", model, resume)
 }
 
-// baseArgv builds the shared cursor-agent flag scaffolding. The prompt itself is
-// always delivered on stdin, never as a positional argv element.
 func baseArgv(base []string, format, model, resume string) []string {
 	b := streamBase(base)
 	argv := make([]string, 0, len(b)+7)

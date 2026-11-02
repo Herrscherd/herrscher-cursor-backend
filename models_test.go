@@ -13,9 +13,6 @@ func TestModelsAreValid(t *testing.T) {
 }
 
 func TestModelsAreNativeOnly(t *testing.T) {
-	// cursor-agent exposes no redirection lever. A gateway model here would be
-	// impossible to serve — and this property is what excludes cursor from the
-	// public build without explicit removal.
 	for _, m := range Models {
 		if m.Route != contracts.RouteNative {
 			t.Errorf("model %q has route %q; cursor cannot be redirected", m.ID, m.Route)
@@ -24,8 +21,6 @@ func TestModelsAreNativeOnly(t *testing.T) {
 }
 
 func TestModelsDeclareNoSeparateEffort(t *testing.T) {
-	// Cursor effort is encoded in the model ID (suffix -high). Declaring a
-	// separate axis would produce a --effort that the CLI rejects.
 	for _, m := range Models {
 		if len(m.Efforts) != 0 {
 			t.Errorf("model %q declares efforts %v; cursor bakes effort into the ID", m.ID, m.Efforts)

@@ -8,12 +8,10 @@ import (
 )
 
 func TestStreamResponderResumeToken(t *testing.T) {
-	// Before the first turn, the token is whatever was passed in at construction.
 	r := &streamResponder{session: "boot-id"}
 	if got := r.ResumeToken(); got != "boot-id" {
 		t.Fatalf("fresh: want boot-id, got %q", got)
 	}
-	// After a turn records a session id, the live id wins.
 	r.session = "sess-1"
 	if got := r.ResumeToken(); got != "sess-1" {
 		t.Fatalf("live: want sess-1, got %q", got)

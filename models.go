@@ -3,7 +3,7 @@ package cursor
 import contracts "github.com/Herrscherd/herrscher-contracts"
 
 // Models is the cursor-agent model catalog. The IDs are those verified live
-// via `cursor-agent models` at commit 3557344 — the previous iteration listed
+// via `cursor-agent models` at commit 3557344; the previous iteration listed
 // nonexistent models, which produced "Cannot use this model" at startup.
 //
 // Effort is encoded IN the ID (suffix -high, -thinking-…): no separate axis,
