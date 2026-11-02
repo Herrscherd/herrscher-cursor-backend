@@ -23,7 +23,7 @@ func TestStreamResponderIsResumeAware(_ *testing.T) {
 }
 
 func TestNewBackendThreadsResumeID(t *testing.T) {
-	b, err := NewBackend(context.Background(), Config{Kind: "stream", Cmd: "cursor-agent", ResumeID: "x"})
+	b, err := NewBackend(context.Background(), Config{Kind: BackendKindStream, Cmd: "cursor-agent", ResumeID: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}

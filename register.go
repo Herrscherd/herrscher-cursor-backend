@@ -28,8 +28,12 @@ func init() {
 			},
 		},
 		Backend: func(ctx context.Context, cfg contracts.PluginConfig) (contracts.Backend, error) {
+			kind, err := backendKindSetting(cfg)
+			if err != nil {
+				return nil, err
+			}
 			return NewBackend(ctx, Config{
-				Kind:     cfg.Get("kind"),
+				Kind:     kind,
 				Stream:   boolSetting(cfg, "stream", true),
 				Cmd:      cfg.Get("cmd"),
 				Model:    cfg.Get("model"),
@@ -46,4 +50,12 @@ func boolSetting(cfg contracts.PluginConfig, key string, def bool) bool {
 		return def
 	}
 	return value
+}
+
+func backendKindSetting(cfg contracts.PluginConfig) (BackendKind, error) {
+	text := cfg.Get("kind")
+	if text == "" {
+		return 0, nil
+	}
+	return ParseBackendKind(text)
 }

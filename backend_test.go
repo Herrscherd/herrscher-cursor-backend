@@ -32,11 +32,11 @@ func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
 
 	for _, tc := range []struct {
 		name   string
-		kind   string
+		kind   BackendKind
 		format string
 	}{
-		{name: "oneshot", kind: "oneshot", format: "json"},
-		{name: "stream", kind: "stream", format: "stream-json"},
+		{name: "oneshot", kind: BackendKindOneShot, format: "json"},
+		{name: "stream", kind: BackendKindStream, format: "stream-json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, argv := runStubTurn(t, tc.kind, stub, prompt, model)
@@ -50,7 +50,7 @@ func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
 	}
 }
 
-func runStubTurn(t *testing.T, kind, stub string, prompt contracts.Prompt, model string) (string, []string) {
+func runStubTurn(t *testing.T, kind BackendKind, stub string, prompt contracts.Prompt, model string) (string, []string) {
 	t.Helper()
 	argvPath := filepath.Join(t.TempDir(), "argv")
 	t.Setenv("CURSOR_STUB_ARGV", argvPath)
@@ -175,7 +175,7 @@ func TestReadTurn(t *testing.T) {
 }
 
 func TestNewBackendSelection(t *testing.T) {
-	b, err := NewBackend(t.Context(), Config{Kind: "stream", Cmd: "cursor-agent"})
+	b, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: "cursor-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := writeStreamStub(t, tc.exitCode)
-			backend, err := NewBackend(t.Context(), Config{Kind: "stream", Cmd: stub})
+			backend, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: stub})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -279,5 +279,24 @@ func assertTurnError(t *testing.T, err error, wantExit bool) {
 	}
 	if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 		t.Fatalf("err = %v, want an exit error", err)
+	}
+}
+
+func TestParseBackendKind(t *testing.T) {
+	for _, text := range []string{"oneshot", "stream"} {
+		kind, err := ParseBackendKind(text)
+		if err != nil {
+			t.Fatalf("ParseBackendKind(%q): %v", text, err)
+		}
+		if kind.String() != text {
+			t.Fatalf("ParseBackendKind(%q).String() = %q", text, kind.String())
+		}
+	}
+	kind, err := ParseBackendKind("batch")
+	if err == nil {
+		t.Fatalf("ParseBackendKind accepted an unknown kind as %v", kind)
+	}
+	if _, ok := errors.AsType[*unknownBackendKindError](err); !ok {
+		t.Fatalf("err = %v, want an unknown backend kind error", err)
 	}
 }

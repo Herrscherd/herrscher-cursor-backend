@@ -15,9 +15,9 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-// Config configures a Cursor Agent backend.
+// Config configures a Cursor Agent backend. A zero Kind is derived from Stream.
 type Config struct {
-	Kind     string
+	Kind     BackendKind
 	Stream   bool
 	Cmd      string
 	Model    string
@@ -26,21 +26,51 @@ type Config struct {
 	ResumeID string
 }
 
-const eventKindTool = "tool"
+// BackendKind selects how a turn reaches Cursor Agent.
+type BackendKind uint8
 
+// The closed set of backend kinds.
 const (
-	backendKindOneShot = "oneshot"
-	backendKindStream  = "stream"
+	BackendKindOneShot BackendKind = iota + 1
+	BackendKindStream
 )
 
-func resolveBackend(kind string, stream bool) string {
-	if kind != "" {
+const (
+	oneShotKindText = "oneshot"
+	streamKindText  = "stream"
+)
+
+// ParseBackendKind reads the text form of a BackendKind.
+func ParseBackendKind(text string) (BackendKind, error) {
+	switch text {
+	case oneShotKindText:
+		return BackendKindOneShot, nil
+	case streamKindText:
+		return BackendKindStream, nil
+	}
+	return 0, &unknownBackendKindError{kind: text}
+}
+
+func (k BackendKind) String() string {
+	switch k {
+	case BackendKindOneShot:
+		return oneShotKindText
+	case BackendKindStream:
+		return streamKindText
+	}
+	return fmt.Sprintf("BackendKind(%d)", uint8(k))
+}
+
+const eventKindTool = "tool"
+
+func resolveBackend(kind BackendKind, stream bool) BackendKind {
+	if kind != 0 {
 		return kind
 	}
 	if stream {
-		return backendKindStream
+		return BackendKindStream
 	}
-	return "oneshot"
+	return BackendKindOneShot
 }
 
 // NewBackend builds a configured Cursor Agent backend.
@@ -48,13 +78,12 @@ func NewBackend(_ context.Context, config Config) (contracts.Backend, error) {
 	kind := resolveBackend(config.Kind, config.Stream)
 	base := streamBase(strings.Fields(config.Cmd))
 	switch kind {
-	case backendKindOneShot:
+	case BackendKindOneShot:
 		return &oneShotResponder{base: base, model: config.Model, dir: config.Dir, verbose: config.Verbose}, nil
-	case backendKindStream:
+	case BackendKindStream:
 		return &streamResponder{base: base, model: config.Model, dir: config.Dir, verbose: config.Verbose, session: config.ResumeID}, nil
-	default:
-		return nil, &unknownBackendKindError{kind: kind}
 	}
+	return nil, &unknownBackendKindError{kind: kind.String()}
 }
 
 type unknownBackendKindError struct {
