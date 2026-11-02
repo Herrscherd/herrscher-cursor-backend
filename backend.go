@@ -26,6 +26,8 @@ type Config struct {
 	ResumeID string
 }
 
+const eventKindTool = "tool"
+
 const (
 	backendKindOneShot = "oneshot"
 	backendKindStream  = "stream"
@@ -231,11 +233,11 @@ func toolCallEvent(call map[string]json.RawMessage) contracts.BackendEvent {
 			Args map[string]any `json:"args"`
 		}
 		if json.Unmarshal(raw, &body) != nil {
-			return contracts.BackendEvent{Kind: "tool", Tool: name}
+			return contracts.BackendEvent{Kind: eventKindTool, Tool: name}
 		}
-		return contracts.BackendEvent{Kind: "tool", Tool: name, Detail: toolCallSummary(body.Args)}
+		return contracts.BackendEvent{Kind: eventKindTool, Tool: name, Detail: toolCallSummary(body.Args)}
 	}
-	return contracts.BackendEvent{Kind: "tool"}
+	return contracts.BackendEvent{Kind: eventKindTool}
 }
 
 func toolCallSummary(args map[string]any) string {
