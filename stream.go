@@ -67,7 +67,7 @@ func (r *streamResponder) Respond(ctx context.Context, p contracts.Prompt, onEve
 		return tr.Text, fmt.Errorf("cursor turn: %w", waitErr)
 	}
 	if tr.IsError {
-		return tr.Text, fmt.Errorf("cursor turn failed: %s", tr.ErrMsg)
+		return tr.Text, &turnFailedError{message: tr.ErrMsg}
 	}
 	return tr.Text, nil
 }
@@ -79,6 +79,14 @@ func (r *streamResponder) ResumeToken() string {
 }
 
 func (r *streamResponder) Close() error { return nil }
+
+type turnFailedError struct {
+	message string
+}
+
+func (e *turnFailedError) Error() string {
+	return "cursor turn failed: " + e.message
+}
 
 var memoryFence = regexp.MustCompile(`(?i)<\s*/?\s*memory\s*>`)
 

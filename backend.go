@@ -46,8 +46,16 @@ func NewBackend(ctx context.Context, c Config) (contracts.Backend, error) {
 	case "stream":
 		return &streamResponder{ctx: ctx, base: base, model: c.Model, dir: c.Dir, verbose: c.Verbose, session: c.ResumeID}, nil
 	default:
-		return nil, fmt.Errorf("unknown backend kind %q", kind)
+		return nil, &unknownBackendKindError{kind: kind}
 	}
+}
+
+type unknownBackendKindError struct {
+	kind string
+}
+
+func (e *unknownBackendKindError) Error() string {
+	return fmt.Sprintf("unknown backend kind %q", e.kind)
 }
 
 type oneShotResponder struct {
