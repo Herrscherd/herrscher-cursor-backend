@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -232,13 +233,12 @@ func TestReadTurnWithoutResultReportsContext(t *testing.T) {
 
 func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		exitCode   string
-		wantErr    bool
-		wantErrHas string
+		name     string
+		exitCode string
+		wantExit bool
 	}{
 		{name: "clean exit", exitCode: "0"},
-		{name: "non zero exit", exitCode: "3", wantErr: true, wantErrHas: "exit status 3"},
+		{name: "non zero exit", exitCode: "3", wantExit: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := writeStreamStub(t, tc.exitCode)
@@ -251,7 +251,7 @@ func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
 				t.Fatalf("backend is %T, want *streamResponder", backend)
 			}
 			_, err = r.Respond(t.Context(), contracts.Prompt{Content: "hi"}, nil)
-			assertTurnError(t, err, tc.wantErrHas)
+			assertTurnError(t, err, tc.wantExit)
 			if got := r.ResumeToken(); got != "sess-9" {
 				t.Fatalf("ResumeToken = %q, want sess-9", got)
 			}
@@ -269,15 +269,15 @@ func writeStreamStub(t *testing.T, exitCode string) string {
 	return stub
 }
 
-func assertTurnError(t *testing.T, err error, wantErrHas string) {
+func assertTurnError(t *testing.T, err error, wantExit bool) {
 	t.Helper()
-	if wantErrHas == "" {
+	if !wantExit {
 		if err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	if err == nil || !strings.Contains(err.Error(), wantErrHas) {
-		t.Fatalf("err = %v, want it to mention %q", err, wantErrHas)
+	if _, ok := errors.AsType[*exec.ExitError](err); !ok {
+		t.Fatalf("err = %v, want an exit error", err)
 	}
 }
