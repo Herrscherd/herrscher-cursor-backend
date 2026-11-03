@@ -187,7 +187,7 @@ func TestReadTurn(t *testing.T) {
 		t.Fatalf("events = %+v, want %+v", events, want)
 	}
 	for i := range want {
-		if events[i] != want[i] {
+		if fmt.Sprintf("%+v", events[i]) != fmt.Sprintf("%+v", want[i]) {
 			t.Fatalf("event[%d] = %+v, want %+v", i, events[i], want[i])
 		}
 	}
