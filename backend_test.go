@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/Herrscherd/herrscher-contracts"
+	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
@@ -24,57 +25,78 @@ func TestPromptDeliveredOnStdinNotArgv(t *testing.T) {
 	)
 
 	stub := writeCursorStub(t)
+	attachment := "/tmp/distinctive-attachment.png"
 	prompt := contracts.Prompt{
 		Content:     content,
 		Context:     memory,
-		Attachments: []string{"/tmp/distinctive-attachment.png"},
+		Attachments: []string{attachment},
 	}
 	expectedStdin := withContext(memory, withAttachments(content, prompt.Attachments))
 
 	for _, tc := range []struct {
 		name   string
-		kind   string
+		kind   BackendKind
 		format string
 	}{
-		{name: "oneshot", kind: "oneshot", format: "json"},
-		{name: "stream", kind: "stream", format: "stream-json"},
+		{name: "oneshot", kind: BackendKindOneShot, format: "json"},
+		{name: "stream", kind: BackendKindStream, format: "stream-json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			argvPath := filepath.Join(t.TempDir(), "argv")
-			if err := os.Setenv("CURSOR_STUB_ARGV", argvPath); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Unsetenv("CURSOR_STUB_ARGV") })
-
-			backend, err := NewBackend(context.Background(), Config{
-				Kind:  tc.kind,
-				Cmd:   stub,
-				Model: model,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := backend.Respond(context.Background(), prompt, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			got, argv := runStubTurn(t, tc.kind, stub, prompt, model)
 			wantResult := fmt.Sprintf("stdin-proof:%d:%x", len(expectedStdin), sha256Bytes(expectedStdin))
 			if got != wantResult {
 				t.Fatalf("result = %q, want %q (stdin was not delivered as expected)", got, wantResult)
 			}
-
-			argvBytes, err := os.ReadFile(argvPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			argv := strings.Fields(string(argvBytes))
-			for _, arg := range argv {
-				if strings.Contains(arg, content) || strings.Contains(arg, memory) {
-					t.Fatalf("prompt data leaked into argv: %q", arg)
-				}
-			}
+			assertNoPromptInArgv(t, argv, content, memory, attachment)
 			assertContainsArgs(t, argv, "-p", "--output-format", tc.format, "--model", model)
 		})
+	}
+}
+
+func runStubTurn(t *testing.T, kind BackendKind, stub string, prompt contracts.Prompt, model string) (string, []string) {
+	t.Helper()
+	argvPath := filepath.Join(t.TempDir(), "argv")
+	t.Setenv("CURSOR_STUB_ARGV", argvPath)
+
+	backend, err := NewBackend(t.Context(), Config{Kind: kind, Cmd: stub, Model: model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := backend.Respond(t.Context(), prompt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argvBytes, err := os.ReadFile(argvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got, splitArgv(argvBytes)
+}
+
+func splitArgv(record []byte) []string {
+	return strings.Split(strings.TrimSuffix(string(record), "\x00"), "\x00")
+}
+
+const promptWindow = 8
+
+func assertNoPromptInArgv(t *testing.T, argv []string, secrets ...string) {
+	t.Helper()
+	joined := strings.Join(argv, " ")
+	for _, secret := range secrets {
+		if strings.Contains(joined, secret) {
+			t.Fatalf("prompt data leaked into argv: %q", joined)
+		}
+		for _, word := range strings.Fields(secret) {
+			if len(word) > 3 && strings.Contains(joined, word) {
+				t.Fatalf("prompt word %q leaked into argv: %q", word, joined)
+			}
+		}
+		for start := 0; start+promptWindow <= len(secret); start++ {
+			window := secret[start : start+promptWindow]
+			if strings.Contains(joined, window) {
+				t.Fatalf("prompt fragment %q leaked into argv: %q", window, joined)
+			}
+		}
 	}
 }
 
@@ -83,7 +105,7 @@ func writeCursorStub(t *testing.T) string {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "cursor-agent-stub")
 	script := `#!/bin/sh
-printf '%s\n' "$@" > "$CURSOR_STUB_ARGV"
+printf '%s\0' "$@" > "$CURSOR_STUB_ARGV"
 stdin=$(cat)
 length=$(printf '%s' "$stdin" | wc -c | tr -d ' ')
 hash=$(printf '%s' "$stdin" | sha256sum | cut -d ' ' -f 1)
@@ -165,43 +187,19 @@ func TestReadTurn(t *testing.T) {
 		t.Fatalf("events = %+v, want %+v", events, want)
 	}
 	for i := range want {
-		if !reflect.DeepEqual(events[i], want[i]) {
+		if events[i] != want[i] {
 			t.Fatalf("event[%d] = %+v, want %+v", i, events[i], want[i])
 		}
 	}
 }
 
 func TestNewBackendSelection(t *testing.T) {
-	b, err := NewBackend(nil, Config{Kind: "stream", Cmd: "cursor-agent"})
+	b, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: "cursor-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := b.(*streamResponder); !ok {
 		t.Fatalf("backend = %T, want *streamResponder", b)
-	}
-}
-
-func TestBoolSetting(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		value string
-		want  bool
-	}{
-		{name: "absent", value: "", want: true},
-		{name: "false", value: "false", want: false},
-		{name: "zero", value: "0", want: false},
-		{name: "upper false", value: "FALSE", want: false},
-		{name: "padded false", value: " false ", want: false},
-		{name: "true", value: "true", want: true},
-		{name: "one", value: "1", want: true},
-		{name: "garbage", value: "yes-please", want: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := contracts.PluginConfig{Settings: map[string]string{"stream": tc.value}}
-			if got := boolSetting(cfg, "stream", true); got != tc.want {
-				t.Fatalf("boolSetting(%q) = %v, want %v", tc.value, got, tc.want)
-			}
-		})
 	}
 }
 
@@ -220,9 +218,12 @@ func TestReadTurnWithoutResultReportsContext(t *testing.T) {
 			if !errors.Is(err, io.EOF) {
 				t.Fatalf("err = %v, want wrapped io.EOF", err)
 			}
-			want := fmt.Sprintf("after %d unparsable line(s)", tc.skipped)
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("err = %q, want it to mention %q", err, want)
+			ended, ok := errors.AsType[*StreamEndedError](err)
+			if !ok {
+				t.Fatalf("err = %v, want a stream ended error", err)
+			}
+			if ended.Unparsable != tc.skipped {
+				t.Fatalf("unparsable = %d, want %d", ended.Unparsable, tc.skipped)
 			}
 		})
 	}
@@ -230,37 +231,175 @@ func TestReadTurnWithoutResultReportsContext(t *testing.T) {
 
 func TestStreamRespondKeepsSessionAndWaitError(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		exitCode   string
-		wantErr    bool
-		wantErrHas string
+		name     string
+		exitCode string
+		wantExit bool
 	}{
 		{name: "clean exit", exitCode: "0"},
-		{name: "non zero exit", exitCode: "3", wantErr: true, wantErrHas: "exit status 3"},
+		{name: "non zero exit", exitCode: "3", wantExit: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			stub := filepath.Join(dir, "stub")
-			script := "#!/bin/sh\ncat > /dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"session_id\":\"sess-9\"}\\n'\nexit " + tc.exitCode + "\n"
-			if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			backend, err := NewBackend(context.Background(), Config{Kind: "stream", Cmd: stub})
+			stub := writeStreamStub(t, tc.exitCode)
+			backend, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: stub})
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := backend.(*streamResponder)
-			_, err = r.Respond(context.Background(), contracts.Prompt{Content: "hi"}, nil)
-			if tc.wantErr {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErrHas) {
-					t.Fatalf("err = %v, want it to mention %q", err, tc.wantErrHas)
-				}
-			} else if err != nil {
-				t.Fatal(err)
+			r, ok := backend.(*streamResponder)
+			if !ok {
+				t.Fatalf("backend is %T, want *streamResponder", backend)
 			}
+			_, err = r.Respond(t.Context(), contracts.Prompt{Content: "hi"}, nil)
+			assertTurnError(t, err, tc.wantExit)
 			if got := r.ResumeToken(); got != "sess-9" {
 				t.Fatalf("ResumeToken = %q, want sess-9", got)
 			}
 		})
 	}
+}
+
+func writeStreamStub(t *testing.T, exitCode string) string {
+	t.Helper()
+	return writeStubScript(t, "cat > /dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"session_id\":\"sess-9\"}\\n'\nexit "+exitCode)
+}
+
+func writeStubScript(t *testing.T, body string) string {
+	t.Helper()
+	stub := filepath.Join(t.TempDir(), "stub")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return stub
+}
+
+func assertTurnError(t *testing.T, err error, wantExit bool) {
+	t.Helper()
+	if !wantExit {
+		if err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if _, ok := errors.AsType[*exec.ExitError](err); !ok {
+		t.Fatalf("err = %v, want an exit error", err)
+	}
+}
+
+func TestParseBackendKind(t *testing.T) {
+	for _, text := range []string{"oneshot", "stream"} {
+		kind, err := ParseBackendKind(text)
+		if err != nil {
+			t.Fatalf("ParseBackendKind(%q): %v", text, err)
+		}
+		if kind.String() != text {
+			t.Fatalf("ParseBackendKind(%q).String() = %q", text, kind.String())
+		}
+	}
+	kind, err := ParseBackendKind("batch")
+	if err == nil {
+		t.Fatalf("ParseBackendKind accepted an unknown kind as %v", kind)
+	}
+	if _, ok := errors.AsType[*UnknownBackendKindError](err); !ok {
+		t.Fatalf("err = %v, want an unknown backend kind error", err)
+	}
+}
+
+func TestReadTurnRefusesOverlongLine(t *testing.T) {
+	input := strings.Repeat("x", maxStreamLine+1)
+
+	_, err := readTurn(bufio.NewReader(strings.NewReader(input)), nil)
+	tooLong, ok := errors.AsType[*LineTooLongError](err)
+	if !ok {
+		t.Fatalf("err = %v, want a line too long error", err)
+	}
+	if tooLong.Limit != maxStreamLine {
+		t.Fatalf("limit = %d, want %d", tooLong.Limit, maxStreamLine)
+	}
+}
+
+func TestStreamRespondRefusesOverlongLine(t *testing.T) {
+	stub := writeStubScript(t, `cat > /dev/null
+head -c 17000000 /dev/zero | tr '\0' 'x'
+printf '\n'`)
+	backend, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = backend.Respond(t.Context(), contracts.Prompt{Content: "hi"}, nil)
+	if _, ok := errors.AsType[*LineTooLongError](err); !ok {
+		t.Fatalf("err = %v, want a line too long error", err)
+	}
+}
+
+func TestOneShotRefusesOutputPastTheCap(t *testing.T) {
+	stub := writeStubScript(t, "cat > /dev/null\nexec head -c 1073741824 /dev/zero")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	backend, err := NewBackend(ctx, Config{Kind: BackendKindOneShot, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
+	tooLarge, ok := errors.AsType[*OutputTooLargeError](err)
+	if !ok {
+		t.Fatalf("err = %v, want an output too large error", err)
+	}
+	if tooLarge.Limit != maxOneShotOutput {
+		t.Fatalf("limit = %d, want %d", tooLarge.Limit, maxOneShotOutput)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("Respond waited for the child until the deadline: %v", ctx.Err())
+	}
+}
+
+func TestExecErrorDoesNotCarryStderr(t *testing.T) {
+	const secret = "token=sk-do-not-log"
+	for _, tc := range []struct {
+		name string
+		kind BackendKind
+	}{
+		{name: "oneshot", kind: BackendKindOneShot},
+		{name: "stream", kind: BackendKindStream},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := writeStubScript(t, `cat > /dev/null
+printf '{"type":"result","subtype":"success","result":"ok","session_id":"sess-9"}\n'
+printf '`+secret+`\n' >&2
+exit 3`)
+			backend, err := NewBackend(t.Context(), Config{Kind: tc.kind, Cmd: stub})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = backend.Respond(t.Context(), contracts.Prompt{Content: "hi"}, nil)
+			exitErr, ok := errors.AsType[*exec.ExitError](err)
+			if !ok {
+				t.Fatalf("err = %v, want an exit error", err)
+			}
+			if len(exitErr.Stderr) != 0 {
+				t.Fatalf("ExitError.Stderr = %q, want empty", exitErr.Stderr)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("error text carries stderr: %v", err)
+			}
+		})
+	}
+}
+
+func FuzzConsumeLine(f *testing.F) {
+	for _, line := range []string{
+		`{"type":"system","subtype":"init","session_id":"sess-1"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]},"session_id":"sess-1"}`,
+		`{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"README.md"}}},"session_id":"sess-1"}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"Hello","session_id":"sess-1"}`,
+		"update available",
+		`{"type":"assis`,
+	} {
+		f.Add([]byte(line))
+	}
+	f.Fuzz(func(t *testing.T, line []byte) {
+		outcome := consumeLine(line, func(contracts.BackendEvent) {})
+		if !outcome.isDone && outcome.turn != (turnResult{}) {
+			t.Fatalf("line %q yields a turn without ending the turn: %+v", line, outcome.turn)
+		}
+	})
 }
