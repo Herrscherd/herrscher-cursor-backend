@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,13 +19,22 @@ import (
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
-const turnResultLine = `printf '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"sess-7"}\n'`
+const (
+	turnResultLine = `printf '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"sess-7"}\n'`
+	respondLimit   = 5 * time.Second
+)
 
 type grandchildRun struct {
 	text    string
 	err     error
 	elapsed time.Duration
 	pid     int
+}
+
+type respondOutcome struct {
+	text    string
+	err     error
+	elapsed time.Duration
 }
 
 func runTurnWithGrandchild(ctx context.Context, t *testing.T, spawn string) grandchildRun {
@@ -35,16 +46,65 @@ func runTurnWithGrandchild(ctx context.Context, t *testing.T, spawn string) gran
 		t.Fatal(err)
 	}
 
-	start := time.Now()
-	text, err := backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
-	elapsed := time.Since(start)
+	outcome := respondWithGuard(ctx, t, backend, "hi", respondLimit)
+	return grandchildRun{text: outcome.text, err: outcome.err, elapsed: outcome.elapsed, pid: readGrandchildPid(t, pidPath)}
+}
 
-	return grandchildRun{text: text, err: err, elapsed: elapsed, pid: readGrandchildPid(t, pidPath)}
+func respondWithGuard(ctx context.Context, t *testing.T, backend contracts.Backend, content string, limit time.Duration) respondOutcome {
+	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
+	finished := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(respondLimit):
+			t.Error("Respond goroutine did not finish after its context was cancelled")
+		}
+	})
+	done := make(chan respondOutcome, 1)
+	start := time.Now()
+	go func() {
+		defer close(finished)
+		text, err := backend.Respond(ctx, contracts.Prompt{Content: content}, nil)
+		done <- respondOutcome{text: text, err: err, elapsed: time.Since(start)}
+	}()
+	select {
+	case outcome := <-done:
+		return outcome
+	case <-time.After(limit):
+		t.Fatalf("Respond did not return within %v", limit)
+		return respondOutcome{}
+	}
 }
 
 func grandchildPidFile(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "pid")
+	pidPath := filepath.Join(t.TempDir(), "pid")
+	t.Cleanup(func() {
+		killRecordedGrandchild(t, pidPath)
+	})
+	return pidPath
+}
+
+func killRecordedGrandchild(t *testing.T, pidPath string) {
+	t.Helper()
+	raw, err := os.ReadFile(pidPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		t.Errorf("read grandchild pid: %v", err)
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Errorf("parse grandchild pid: %v", err)
+		return
+	}
+	if killErr := syscall.Kill(pid, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+		t.Errorf("cleanup kill of %d: %v", pid, killErr)
+	}
 }
 
 func readGrandchildPid(t *testing.T, pidPath string) int {
@@ -57,26 +117,51 @@ func readGrandchildPid(t *testing.T, pidPath string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if killErr := syscall.Kill(pid, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
-			t.Errorf("cleanup kill of %d: %v", pid, killErr)
-		}
-	})
 	return pid
 }
 
 func assertGrandchildGone(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
-	for {
-		err := syscall.Kill(pid, 0)
-		if errors.Is(err, syscall.ESRCH) {
-			return
-		}
+	for !grandchildGone(pid) {
 		if time.Now().After(deadline) {
-			t.Fatalf("grandchild %d still alive: kill(pid, 0) = %v, want ESRCH", pid, err)
+			t.Fatalf("grandchild %d still alive: want ESRCH or a zombie", pid)
 		}
 		<-time.After(10 * time.Millisecond)
+	}
+}
+
+func grandchildGone(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return errors.Is(err, syscall.ESRCH) || isZombie(pid)
+}
+
+func isZombie(pid int) bool {
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	content := string(stat)
+	fields := strings.Fields(content[strings.LastIndexByte(content, ')')+1:])
+	return len(fields) > 0 && (fields[0] == "Z" || fields[0] == "X")
+}
+
+func TestAssertGrandchildGoneAcceptsZombie(t *testing.T) {
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	timeout := time.After(5 * time.Second)
+	for !isZombie(cmd.Process.Pid) {
+		select {
+		case <-timeout:
+			t.Fatal("child did not become a zombie")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	assertGrandchildGone(t, cmd.Process.Pid)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("reap zombie: %v", err)
 	}
 }
 
@@ -137,9 +222,9 @@ func TestOneShotKillsBackgroundChildAfterOverCap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
-	if _, ok := errors.AsType[*OutputTooLargeError](err); !ok {
-		t.Fatalf("err = %v, want an output too large error", err)
+	outcome := respondWithGuard(ctx, t, backend, "hi", respondLimit)
+	if _, ok := errors.AsType[*OutputTooLargeError](outcome.err); !ok {
+		t.Fatalf("err = %v, want an output too large error", outcome.err)
 	}
 	if ctx.Err() != nil {
 		t.Fatalf("Respond waited for a background child until the deadline: %v", ctx.Err())
@@ -157,9 +242,9 @@ func TestRespondKillsBackgroundChildAfterOverlongLine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
-	if _, ok := errors.AsType[*LineTooLongError](err); !ok {
-		t.Fatalf("err = %v, want a line too long error", err)
+	outcome := respondWithGuard(ctx, t, backend, "hi", respondLimit)
+	if _, ok := errors.AsType[*LineTooLongError](outcome.err); !ok {
+		t.Fatalf("err = %v, want a line too long error", outcome.err)
 	}
 	if ctx.Err() != nil {
 		t.Fatalf("Respond waited for a background child until the deadline: %v", ctx.Err())
@@ -175,31 +260,48 @@ func TestSuccessfulTurnReturnsWhenEscapedGrandchildHoldsStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	type outcome struct {
-		text string
-		err  error
+	outcome := respondWithGuard(t.Context(), t, backend, strings.Repeat("x", 1<<20), 10*time.Second)
+	if outcome.err != nil {
+		t.Fatalf("Respond error = %v, want nil", outcome.err)
 	}
-	done := make(chan outcome, 1)
-	start := time.Now()
-	go func() {
-		text, err := backend.Respond(t.Context(), contracts.Prompt{Content: strings.Repeat("x", 1<<20)}, nil)
-		done <- outcome{text: text, err: err}
-	}()
-	select {
-	case got := <-done:
-		if got.err != nil {
-			t.Fatalf("Respond error = %v, want nil", got.err)
-		}
-		if got.text != "ok" {
-			t.Fatalf("Respond text = %q, want ok", got.text)
-		}
-		if elapsed := time.Since(start); elapsed > 5*time.Second {
-			t.Fatalf("Respond took %v, want it bounded by the output grace", elapsed)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Respond did not return: the prompt writer was not released and joined")
+	if outcome.text != "ok" {
+		t.Fatalf("Respond text = %q, want ok", outcome.text)
+	}
+	if outcome.elapsed > 5*time.Second {
+		t.Fatalf("Respond took %v, want it bounded by the output grace", outcome.elapsed)
 	}
 	if err := syscall.Kill(readGrandchildPid(t, pidPath), 0); err != nil {
 		t.Fatalf("escaped grandchild is gone: %v; the stdin holder was not exercised", err)
+	}
+}
+
+func TestReadOutputGraceWithoutReadDeadlineIsBounded(t *testing.T) {
+	stdout, err := os.Create(filepath.Join(t.TempDir(), "stdout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		closeQuietly(stdout)
+	})
+	exited := make(chan struct{})
+	close(exited)
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		close(release)
+	})
+	proc := &turnProcess{stdout: stdout, exited: exited}
+
+	start := time.Now()
+	_, err = readOutput(proc, func() {}, func(io.Reader) (struct{}, error) {
+		<-release
+		return struct{}{}, nil
+	})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("readOutput error = %v, want the output grace deadline", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("readOutput took %v, want it bounded by the output grace", elapsed)
 	}
 }
