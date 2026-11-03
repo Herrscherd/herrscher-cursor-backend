@@ -3,6 +3,7 @@ package cursor
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -30,22 +31,28 @@ func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, 
 	defer r.turns.Unlock()
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	cmd := turnCommand(runCtx, cursorArgv(r.base, r.model, r.ResumeToken()), r.dir, turnInput(prompt), r.stderr)
-	out, err := cmd.StdoutPipe()
+	proc, err := startTurn(runCtx, cursorArgv(r.base, r.model, r.ResumeToken()), r.dir, turnInput(prompt), r.stderr)
 	if err != nil {
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("cursor start: %w", err)
-	}
-	turn, readErr := readTurn(bufio.NewReader(out), onEvent)
-	if readErr != nil {
-		stop()
-	}
-	drainErr := r.drainOutput(out)
-	waitErr := cmd.Wait()
+	turn, readErr := readOutput(proc, stop, func(out io.Reader) (turnResult, error) {
+		return readTurn(bufio.NewReader(out), onEvent)
+	})
+	drainErr := r.drainOutput(proc, stop)
+	waitErr := errors.Join(proc.wait(), proc.stdout.Close())
 	r.setSession(turn.SessionID)
 	return turn.Text, streamOutcome(turn, readErr, drainErr, waitErr)
+}
+
+func (r *streamResponder) drainOutput(proc *turnProcess, stop context.CancelFunc) error {
+	drain := r.drain
+	if drain == nil {
+		drain = drainPipe
+	}
+	_, err := readOutput(proc, stop, func(pipe io.Reader) (struct{}, error) {
+		return struct{}{}, drain(pipe)
+	})
+	return ignoreOwnDeadline(err)
 }
 
 func streamOutcome(turn turnResult, readErr, drainErr, waitErr error) error {
@@ -90,13 +97,6 @@ type TurnFailedError struct {
 
 func (e *TurnFailedError) Error() string {
 	return "cursor turn failed: " + e.Message
-}
-
-func (r *streamResponder) drainOutput(pipe io.Reader) error {
-	if r.drain == nil {
-		return drainPipe(pipe)
-	}
-	return r.drain(pipe)
 }
 
 func drainPipe(pipe io.Reader) error {

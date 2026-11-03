@@ -11,10 +11,14 @@ import (
 func configureChild(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if err != nil && !errors.Is(err, syscall.ESRCH) {
-			return err
-		}
-		return nil
+		return killGroup(cmd.Process.Pid)
 	}
+}
+
+func killGroup(pid int) error {
+	err := syscall.Kill(-pid, syscall.SIGKILL)
+	if err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
 }

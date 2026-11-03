@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
-	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
@@ -44,7 +43,6 @@ const (
 	streamKindText  = "stream"
 	defaultCmd      = "cursor-agent"
 	maxStreamLine   = 16 << 20
-	childWaitDelay  = 5 * time.Second
 )
 
 const maxOneShotOutput int64 = maxStreamLine
@@ -143,7 +141,7 @@ func diagnosticsOutput(config Config) io.Writer {
 	if config.Verbose {
 		return os.Stderr
 	}
-	return io.Discard
+	return nil
 }
 
 type oneShotResponder struct {
@@ -166,19 +164,14 @@ func (e *OutputTooLargeError) Error() string {
 func (o *oneShotResponder) Respond(ctx context.Context, prompt contracts.Prompt, _ func(contracts.BackendEvent)) (string, error) {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	cmd := turnCommand(runCtx, baseArgv(o.base, "json", o.model, ""), o.dir, turnInput(prompt), o.stderr)
-	out, err := cmd.StdoutPipe()
+	proc, err := startTurn(runCtx, baseArgv(o.base, "json", o.model, ""), o.dir, turnInput(prompt), o.stderr)
 	if err != nil {
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("cursor start: %w", err)
-	}
-	stdout, readErr := readBounded(out, maxOneShotOutput)
-	if readErr != nil {
-		stop()
-	}
-	waitErr := cmd.Wait()
+	stdout, readErr := readOutput(proc, stop, func(out io.Reader) ([]byte, error) {
+		return readBounded(out, maxOneShotOutput)
+	})
+	waitErr := errors.Join(proc.wait(), proc.stdout.Close())
 	if readErr != nil {
 		return "", fmt.Errorf("cursor exec failed: %w", readErr)
 	}
@@ -189,8 +182,8 @@ func (o *oneShotResponder) Respond(ctx context.Context, prompt contracts.Prompt,
 }
 
 func readBounded(pipe io.Reader, limit int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(pipe, limit+1))
-	if err != nil {
+	data, readErr := io.ReadAll(io.LimitReader(pipe, limit+1))
+	if err := ignoreOwnDeadline(readErr); err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > limit {
@@ -205,12 +198,10 @@ func turnInput(p contracts.Prompt) string {
 	return withContext(p.Context, withAttachments(p.Content, p.Attachments))
 }
 
-func turnCommand(ctx context.Context, argv []string, dir, prompt string, stderr io.Writer) *exec.Cmd {
+func turnCommand(ctx context.Context, argv []string, dir string, stderr io.Writer) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	configureChild(cmd)
-	cmd.WaitDelay = childWaitDelay
 	cmd.Dir = dir
-	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stderr = stderr
 	return cmd
 }

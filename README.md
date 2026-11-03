@@ -56,14 +56,17 @@ returned error, because it may carry tokens. A line of stream output longer than
 than 16 MiB kills the child and ends the turn with an `OutputTooLargeError`, whose
 output is never returned. Both limits are the same cap.
 
-Each turn child starts in its own process group (`Setpgid`, in `process_unix.go`),
-and stopping a turn kills the whole group with `SIGKILL`, not only the direct
-child. A background process the CLI leaves behind therefore dies with the turn
-and cannot hold its stdout open. When a stream turn stops reading on a read
-error, or a `oneshot` turn passes its cap, the group is killed before the turn
-returns. `cmd.WaitDelay` is a backstop for a grandchild that escapes the group.
-Outside Unix (`process_other.go`) the group kill is absent and only the direct
-child is killed.
+Each turn child starts in its own process group (`Setpgid`, in `process_unix.go`).
+The group is killed with `SIGKILL` as soon as the direct child exits, and again
+when a turn stops early (a read error, a `oneshot` cap, or the turn context), so
+a background process the CLI leaves behind dies with the turn. Output is drained
+in parallel with that kill. Once the direct child has exited, a descendant that
+escaped the group (for example through `setsid`) and still holds stdout gets one
+second to finish; after that the read is cut short and the turn ends without
+error. This package does not kill such an escaped process. Because the child is
+in its own process group, a terminal Ctrl-C does not reach it: the turn ends
+only when its context is cancelled. Outside Unix (`process_other.go`) the group
+kill is absent and only the direct child is killed.
 
 ## Model catalog
 
