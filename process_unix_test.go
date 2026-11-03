@@ -28,7 +28,7 @@ type grandchildRun struct {
 
 func runTurnWithGrandchild(ctx context.Context, t *testing.T, spawn string) grandchildRun {
 	t.Helper()
-	pidPath := filepath.Join(t.TempDir(), "pid")
+	pidPath := grandchildPidFile(t)
 	stub := writeStubScript(t, "cat > /dev/null\n"+fmt.Sprintf(spawn, pidPath)+"\n"+turnResultLine)
 	backend, err := NewBackend(ctx, Config{Kind: BackendKindStream, Cmd: stub})
 	if err != nil {
@@ -39,20 +39,30 @@ func runTurnWithGrandchild(ctx context.Context, t *testing.T, spawn string) gran
 	text, err := backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
 	elapsed := time.Since(start)
 
-	raw, readErr := os.ReadFile(pidPath)
-	if readErr != nil {
-		t.Fatalf("grandchild pid not written: %v", readErr)
+	return grandchildRun{text: text, err: err, elapsed: elapsed, pid: readGrandchildPid(t, pidPath)}
+}
+
+func grandchildPidFile(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "pid")
+}
+
+func readGrandchildPid(t *testing.T, pidPath string) int {
+	t.Helper()
+	raw, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatalf("grandchild pid not written: %v", err)
 	}
-	pid, convErr := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if convErr != nil {
-		t.Fatal(convErr)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if killErr := syscall.Kill(pid, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
 			t.Errorf("cleanup kill of %d: %v", pid, killErr)
 		}
 	})
-	return grandchildRun{text: text, err: err, elapsed: elapsed, pid: pid}
+	return pid
 }
 
 func assertGrandchildGone(t *testing.T, pid int) {
@@ -114,5 +124,82 @@ func TestSuccessfulTurnReturnsWhenGrandchildEscapesGroup(t *testing.T) {
 	}
 	if err := syscall.Kill(run.pid, 0); err != nil {
 		t.Fatalf("escaped grandchild %d is gone: %v; the escape path was not exercised", run.pid, err)
+	}
+}
+
+func TestOneShotKillsBackgroundChildAfterOverCap(t *testing.T) {
+	pidPath := grandchildPidFile(t)
+	stub := writeStubScript(t, fmt.Sprintf("cat > /dev/null\nsleep 25 &\necho $! > %s\nexec head -c 1073741824 /dev/zero", pidPath))
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	backend, err := NewBackend(ctx, Config{Kind: BackendKindOneShot, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
+	if _, ok := errors.AsType[*OutputTooLargeError](err); !ok {
+		t.Fatalf("err = %v, want an output too large error", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("Respond waited for a background child until the deadline: %v", ctx.Err())
+	}
+	assertGrandchildGone(t, readGrandchildPid(t, pidPath))
+}
+
+func TestRespondKillsBackgroundChildAfterOverlongLine(t *testing.T) {
+	pidPath := grandchildPidFile(t)
+	stub := writeStubScript(t, fmt.Sprintf("cat > /dev/null\nsleep 25 &\necho $! > %s\nhead -c %d /dev/zero\nexec sleep 600", pidPath, 2*maxStreamLine))
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	backend, err := NewBackend(ctx, Config{Kind: BackendKindStream, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
+	if _, ok := errors.AsType[*LineTooLongError](err); !ok {
+		t.Fatalf("err = %v, want a line too long error", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("Respond waited for a background child until the deadline: %v", ctx.Err())
+	}
+	assertGrandchildGone(t, readGrandchildPid(t, pidPath))
+}
+
+func TestSuccessfulTurnReturnsWhenEscapedGrandchildHoldsStdin(t *testing.T) {
+	pidPath := grandchildPidFile(t)
+	stub := writeStubScript(t, fmt.Sprintf("exec 3<&0\nsetsid sh -c 'echo $$ > %[1]s; exec sleep 25' 0<&3 &\nwhile [ ! -s %[1]s ]; do :; done\n%[2]s", pidPath, turnResultLine))
+	backend, err := NewBackend(t.Context(), Config{Kind: BackendKindStream, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type outcome struct {
+		text string
+		err  error
+	}
+	done := make(chan outcome, 1)
+	start := time.Now()
+	go func() {
+		text, err := backend.Respond(t.Context(), contracts.Prompt{Content: strings.Repeat("x", 1<<20)}, nil)
+		done <- outcome{text: text, err: err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("Respond error = %v, want nil", got.err)
+		}
+		if got.text != "ok" {
+			t.Fatalf("Respond text = %q, want ok", got.text)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("Respond took %v, want it bounded by the output grace", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Respond did not return: the prompt writer was not released and joined")
+	}
+	if err := syscall.Kill(readGrandchildPid(t, pidPath), 0); err != nil {
+		t.Fatalf("escaped grandchild is gone: %v; the stdin holder was not exercised", err)
 	}
 }

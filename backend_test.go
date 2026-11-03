@@ -403,21 +403,3 @@ func FuzzConsumeLine(f *testing.F) {
 		}
 	})
 }
-
-func TestOneShotKillsBackgroundChildAfterOverCap(t *testing.T) {
-	stub := writeStubScript(t, "cat > /dev/null\nsleep 25 &\nexec head -c 1073741824 /dev/zero")
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	backend, err := NewBackend(ctx, Config{Kind: BackendKindOneShot, Cmd: stub})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = backend.Respond(ctx, contracts.Prompt{Content: "hi"}, nil)
-	if _, ok := errors.AsType[*OutputTooLargeError](err); !ok {
-		t.Fatalf("err = %v, want an output too large error", err)
-	}
-	if ctx.Err() != nil {
-		t.Fatalf("Respond waited for a background child until the deadline: %v", ctx.Err())
-	}
-}

@@ -13,10 +13,12 @@ import (
 const childOutputGrace = time.Second
 
 type turnProcess struct {
-	cmd     *exec.Cmd
-	stdout  *os.File
-	exited  chan struct{}
-	waitErr error
+	cmd      *exec.Cmd
+	stdin    *os.File
+	stdout   *os.File
+	prompted chan struct{}
+	exited   chan struct{}
+	waitErr  error
 }
 
 type readOutcome[Result any] struct {
@@ -41,33 +43,43 @@ func startTurn(ctx context.Context, argv []string, dir, prompt string, stderr io
 	if startErr != nil {
 		return nil, errors.Join(startErr, childEnds, stdinWriter.Close(), stdoutReader.Close())
 	}
-	proc := &turnProcess{cmd: cmd, stdout: stdoutReader, exited: make(chan struct{})}
+	proc := &turnProcess{
+		cmd:      cmd,
+		stdin:    stdinWriter,
+		stdout:   stdoutReader,
+		prompted: make(chan struct{}),
+		exited:   make(chan struct{}),
+	}
+	go proc.writePrompt(prompt)
 	go proc.reap()
 	if childEnds != nil {
-		return nil, errors.Join(childEnds, killGroup(cmd.Process.Pid), proc.wait(), stdinWriter.Close(), stdoutReader.Close())
+		return nil, errors.Join(childEnds, killGroup(cmd.Process.Pid), proc.wait(), stdoutReader.Close())
 	}
-	go writePrompt(stdinWriter, prompt)
 	return proc, nil
 }
 
-func writePrompt(pipe *os.File, prompt string) {
-	if _, err := io.Copy(pipe, strings.NewReader(prompt)); err != nil {
-		closeQuietly(pipe)
+func (proc *turnProcess) writePrompt(prompt string) {
+	defer close(proc.prompted)
+	if _, err := io.Copy(proc.stdin, strings.NewReader(prompt)); err != nil {
+		closeQuietly(proc.stdin)
 		return
 	}
-	closeQuietly(pipe)
+	closeQuietly(proc.stdin)
+}
+
+func (proc *turnProcess) reap() {
+	waitErr := proc.cmd.Wait()
+	killErr := killGroup(proc.cmd.Process.Pid)
+	closeQuietly(proc.stdin)
+	<-proc.prompted
+	proc.waitErr = errors.Join(waitErr, killErr)
+	close(proc.exited)
 }
 
 func closeQuietly(file *os.File) {
 	if err := file.Close(); err != nil {
 		return
 	}
-}
-
-func (proc *turnProcess) reap() {
-	waitErr := proc.cmd.Wait()
-	proc.waitErr = errors.Join(waitErr, killGroup(proc.cmd.Process.Pid))
-	close(proc.exited)
 }
 
 func (proc *turnProcess) wait() error {
