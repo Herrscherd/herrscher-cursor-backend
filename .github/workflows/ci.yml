@@ -19,3 +19,14 @@ jobs:
           cache: true
       - name: Quality chain of the go-book
         run: scripts/check.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Output grace and prompt writer on Windows
+        run: go test -race -run 'ReadOutputGrace|WritePrompt' .

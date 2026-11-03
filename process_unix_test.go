@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -272,33 +271,6 @@ func TestSuccessfulTurnReturnsWhenEscapedGrandchildHoldsStdin(t *testing.T) {
 	}
 	if err := syscall.Kill(readGrandchildPid(t, pidPath), 0); err != nil {
 		t.Fatalf("escaped grandchild is gone: %v; the stdin holder was not exercised", err)
-	}
-}
-
-func TestReadOutputGraceWithoutReadDeadlineIsBounded(t *testing.T) {
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		closeQuietly(writer)
-	})
-	exited := make(chan struct{})
-	close(exited)
-	proc := &turnProcess{stdout: reader, exited: exited, setDeadline: func(*os.File, time.Time) error { return os.ErrNoDeadline }}
-
-	start := time.Now()
-	_, err = readOutput(proc, func() {}, func(pipe io.Reader) (struct{}, error) {
-		_, readErr := io.ReadAll(pipe)
-		return struct{}{}, readErr
-	})
-	elapsed := time.Since(start)
-
-	if !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("readOutput error = %v, want the read cut by the grace close", err)
-	}
-	if elapsed > 5*time.Second {
-		t.Fatalf("readOutput took %v, want it bounded by the output grace", elapsed)
 	}
 }
 
