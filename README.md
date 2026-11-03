@@ -64,8 +64,8 @@ in parallel with that kill. Once the direct child has exited, a descendant that
 escaped the group (for example through `setsid`) and still holds stdout gets one
 second to finish; after that the read is cut short and the turn ends without
 error. This package does not kill such an escaped process. Because the child is
-in its own process group, a terminal Ctrl-C does not reach it: the turn ends
-only when its context is cancelled. Outside Unix (`process_other.go`) the group
+in its own process group, a terminal Ctrl-C does not stop the child; the turn ends
+when the child exits or when its context is cancelled. Outside Unix (`process_other.go`) the group
 kill is absent and only the direct child is killed.
 
 ## Model catalog
