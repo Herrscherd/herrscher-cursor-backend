@@ -7,18 +7,20 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
 const childOutputGrace = time.Second
 
 type turnProcess struct {
-	cmd      *exec.Cmd
-	stdin    *os.File
-	stdout   *os.File
-	prompted chan struct{}
-	exited   chan struct{}
-	waitErr  error
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    *os.File
+	prompted  chan struct{}
+	exited    chan struct{}
+	promptErr error
+	waitErr   error
 }
 
 type readOutcome[Result any] struct {
@@ -60,11 +62,15 @@ func startTurn(ctx context.Context, argv []string, dir, prompt string, stderr io
 
 func (proc *turnProcess) writePrompt(prompt string) {
 	defer close(proc.prompted)
-	if _, err := io.Copy(proc.stdin, strings.NewReader(prompt)); err != nil {
-		closeQuietly(proc.stdin)
-		return
-	}
+	_, err := io.Copy(proc.stdin, strings.NewReader(prompt))
 	closeQuietly(proc.stdin)
+	if err != nil && !isStdinGone(err) {
+		proc.promptErr = err
+	}
+}
+
+func isStdinGone(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, os.ErrClosed)
 }
 
 func (proc *turnProcess) reap() {
@@ -72,11 +78,11 @@ func (proc *turnProcess) reap() {
 	killErr := killGroup(proc.cmd.Process.Pid)
 	closeQuietly(proc.stdin)
 	<-proc.prompted
-	proc.waitErr = errors.Join(waitErr, killErr)
+	proc.waitErr = errors.Join(waitErr, killErr, proc.promptErr)
 	close(proc.exited)
 }
 
-func closeQuietly(file *os.File) {
+func closeQuietly(file io.Closer) {
 	if err := file.Close(); err != nil {
 		return
 	}
@@ -97,17 +103,36 @@ func readOutput[Result any](proc *turnProcess, stop context.CancelFunc, read fun
 	select {
 	case outcome = <-reads:
 	case <-proc.exited:
-		if err := proc.stdout.SetReadDeadline(time.Now().Add(childOutputGrace)); err != nil {
+		graced, err := awaitOutputGrace(proc, reads)
+		if err != nil {
 			stop()
 			var zero Result
 			return zero, err
 		}
-		outcome = <-reads
+		outcome = graced
 	}
 	if outcome.err != nil {
 		stop()
 	}
 	return outcome.value, outcome.err
+}
+
+func awaitOutputGrace[Result any](proc *turnProcess, reads <-chan readOutcome[Result]) (readOutcome[Result], error) {
+	err := proc.stdout.SetReadDeadline(time.Now().Add(childOutputGrace))
+	if err == nil {
+		return <-reads, nil
+	}
+	if !errors.Is(err, os.ErrNoDeadline) {
+		return readOutcome[Result]{}, err
+	}
+	timer := time.NewTimer(childOutputGrace)
+	defer timer.Stop()
+	select {
+	case outcome := <-reads:
+		return outcome, nil
+	case <-timer.C:
+		return readOutcome[Result]{err: os.ErrDeadlineExceeded}, nil
+	}
 }
 
 func ignoreOwnDeadline(err error) error {
