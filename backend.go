@@ -130,9 +130,9 @@ func NewBackend(_ context.Context, config Config) (contracts.Backend, error) {
 	kind := resolveBackend(config)
 	switch kind {
 	case BackendKindOneShot:
-		return &oneShotResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr}, nil
+		return &oneShotResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr, setDeadline: setReadDeadline}, nil
 	case BackendKindStream:
-		return &streamResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr, drain: drainPipe, session: config.ResumeID}, nil
+		return &streamResponder{base: base, model: config.Model, dir: config.Dir, stderr: stderr, drain: drainPipe, setDeadline: setReadDeadline, session: config.ResumeID}, nil
 	}
 	return nil, &UnknownBackendKindError{Kind: kind.String()}
 }
@@ -145,10 +145,11 @@ func diagnosticsOutput(config Config) io.Writer {
 }
 
 type oneShotResponder struct {
-	base   []string
-	model  string
-	dir    string
-	stderr io.Writer
+	base        []string
+	model       string
+	dir         string
+	stderr      io.Writer
+	setDeadline stdoutDeadline
 }
 
 // OutputTooLargeError reports a oneshot turn whose stdout is longer than Limit
@@ -164,14 +165,14 @@ func (e *OutputTooLargeError) Error() string {
 func (o *oneShotResponder) Respond(ctx context.Context, prompt contracts.Prompt, _ func(contracts.BackendEvent)) (string, error) {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	proc, err := startTurn(runCtx, baseArgv(o.base, "json", o.model, ""), o.dir, turnInput(prompt), o.stderr)
+	proc, err := startTurn(runCtx, baseArgv(o.base, "json", o.model, ""), o.dir, turnInput(prompt), o.stderr, o.setDeadline)
 	if err != nil {
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
 	stdout, readErr := readOutput(proc, stop, func(out io.Reader) ([]byte, error) {
 		return readBounded(out, maxOneShotOutput)
 	})
-	waitErr := errors.Join(proc.wait(), proc.stdout.Close())
+	waitErr := errors.Join(proc.wait(), proc.closeStdout())
 	if readErr != nil {
 		return "", fmt.Errorf("cursor exec failed: %w", readErr)
 	}
@@ -183,7 +184,7 @@ func (o *oneShotResponder) Respond(ctx context.Context, prompt contracts.Prompt,
 
 func readBounded(pipe io.Reader, limit int64) ([]byte, error) {
 	data, readErr := io.ReadAll(io.LimitReader(pipe, limit+1))
-	if err := ignoreOwnDeadline(readErr); err != nil {
+	if err := ignoreOwnCut(readErr); err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > limit {

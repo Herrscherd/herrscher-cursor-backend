@@ -14,14 +14,15 @@ import (
 )
 
 type streamResponder struct {
-	base    []string
-	model   string
-	dir     string
-	stderr  io.Writer
-	drain   func(io.Reader) error
-	turns   sync.Mutex
-	mu      sync.Mutex
-	session string
+	base        []string
+	model       string
+	dir         string
+	stderr      io.Writer
+	drain       func(io.Reader) error
+	setDeadline stdoutDeadline
+	turns       sync.Mutex
+	mu          sync.Mutex
+	session     string
 }
 
 var _ contracts.ResumeAware = (*streamResponder)(nil)
@@ -31,7 +32,7 @@ func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, 
 	defer r.turns.Unlock()
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	proc, err := startTurn(runCtx, cursorArgv(r.base, r.model, r.ResumeToken()), r.dir, turnInput(prompt), r.stderr)
+	proc, err := startTurn(runCtx, cursorArgv(r.base, r.model, r.ResumeToken()), r.dir, turnInput(prompt), r.stderr, r.setDeadline)
 	if err != nil {
 		return "", fmt.Errorf("cursor start: %w", err)
 	}
@@ -39,7 +40,7 @@ func (r *streamResponder) Respond(ctx context.Context, prompt contracts.Prompt, 
 		return readTurn(bufio.NewReader(out), onEvent)
 	})
 	drainErr := r.drainOutput(proc, stop)
-	waitErr := errors.Join(proc.wait(), proc.stdout.Close())
+	waitErr := errors.Join(proc.wait(), proc.closeStdout())
 	r.setSession(turn.SessionID)
 	return turn.Text, streamOutcome(turn, readErr, drainErr, waitErr)
 }
@@ -52,7 +53,7 @@ func (r *streamResponder) drainOutput(proc *turnProcess, stop context.CancelFunc
 	_, err := readOutput(proc, stop, func(pipe io.Reader) (struct{}, error) {
 		return struct{}{}, drain(pipe)
 	})
-	return ignoreOwnDeadline(err)
+	return ignoreOwnCut(err)
 }
 
 func streamOutcome(turn turnResult, readErr, drainErr, waitErr error) error {
