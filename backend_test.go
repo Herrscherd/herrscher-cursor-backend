@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -187,10 +188,45 @@ func TestReadTurn(t *testing.T) {
 		t.Fatalf("events = %+v, want %+v", events, want)
 	}
 	for i := range want {
-		if fmt.Sprintf("%+v", events[i]) != fmt.Sprintf("%+v", want[i]) {
-			t.Fatalf("event[%d] = %+v, want %+v", i, events[i], want[i])
+		if mismatch := firstEventMismatch(events[i], want[i]); mismatch != "" {
+			t.Fatalf("event[%d]: %s", i, mismatch)
 		}
 	}
+}
+
+func firstEventMismatch(got, want contracts.BackendEvent) string {
+	switch {
+	case got.Kind != want.Kind:
+		return fmt.Sprintf("Kind = %q, want %q", got.Kind, want.Kind)
+	case got.Tool != want.Tool:
+		return fmt.Sprintf("Tool = %q, want %q", got.Tool, want.Tool)
+	case got.Detail != want.Detail:
+		return fmt.Sprintf("Detail = %q, want %q", got.Detail, want.Detail)
+	case got.Cost != want.Cost:
+		return fmt.Sprintf("Cost = %v, want %v", got.Cost, want.Cost)
+	case got.IsError != want.IsError:
+		return fmt.Sprintf("IsError = %v, want %v", got.IsError, want.IsError)
+	case got.InTokens != want.InTokens:
+		return fmt.Sprintf("InTokens = %d, want %d", got.InTokens, want.InTokens)
+	case got.OutTokens != want.OutTokens:
+		return fmt.Sprintf("OutTokens = %d, want %d", got.OutTokens, want.OutTokens)
+	case got.CacheRead != want.CacheRead:
+		return fmt.Sprintf("CacheRead = %d, want %d", got.CacheRead, want.CacheRead)
+	case got.CacheCreate != want.CacheCreate:
+		return fmt.Sprintf("CacheCreate = %d, want %d", got.CacheCreate, want.CacheCreate)
+	case !slices.Equal(got.Todos, want.Todos):
+		return fmt.Sprintf("Todos = %+v, want %+v", got.Todos, want.Todos)
+	case !sameSubagent(got.Subagent, want.Subagent):
+		return fmt.Sprintf("Subagent = %+v, want %+v", got.Subagent, want.Subagent)
+	}
+	return ""
+}
+
+func sameSubagent(got, want *contracts.Subagent) bool {
+	if got == nil || want == nil {
+		return got == want
+	}
+	return *got == *want
 }
 
 func TestNewBackendSelection(t *testing.T) {
