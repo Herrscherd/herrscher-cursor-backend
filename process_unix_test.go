@@ -276,32 +276,50 @@ func TestSuccessfulTurnReturnsWhenEscapedGrandchildHoldsStdin(t *testing.T) {
 }
 
 func TestReadOutputGraceWithoutReadDeadlineIsBounded(t *testing.T) {
-	stdout, err := os.Create(filepath.Join(t.TempDir(), "stdout"))
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		closeQuietly(stdout)
+		closeQuietly(writer)
 	})
 	exited := make(chan struct{})
 	close(exited)
-	release := make(chan struct{})
-	t.Cleanup(func() {
-		close(release)
-	})
-	proc := &turnProcess{stdout: stdout, exited: exited}
+	proc := &turnProcess{stdout: reader, exited: exited, setDeadline: func(*os.File, time.Time) error { return os.ErrNoDeadline }}
 
 	start := time.Now()
-	_, err = readOutput(proc, func() {}, func(io.Reader) (struct{}, error) {
-		<-release
-		return struct{}{}, nil
+	_, err = readOutput(proc, func() {}, func(pipe io.Reader) (struct{}, error) {
+		_, readErr := io.ReadAll(pipe)
+		return struct{}{}, readErr
 	})
 	elapsed := time.Since(start)
 
-	if !errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Fatalf("readOutput error = %v, want the output grace deadline", err)
+	if !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("readOutput error = %v, want the read cut by the grace close", err)
 	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("readOutput took %v, want it bounded by the output grace", elapsed)
+	}
+}
+
+func TestOneShotKeepsOutputWhenEscapedHolderHasNoReadDeadline(t *testing.T) {
+	pidPath := grandchildPidFile(t)
+	stub := writeStubScript(t, fmt.Sprintf("cat > /dev/null\nsetsid sh -c 'echo $$ > %[1]s; exec sleep 25' &\nwhile [ ! -s %[1]s ]; do :; done\nprintf ok", pidPath))
+	backend, err := NewBackend(t.Context(), Config{Kind: BackendKindOneShot, Cmd: stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oneShot, ok := backend.(*oneShotResponder)
+	if !ok {
+		t.Fatalf("backend is %T, want *oneShotResponder", backend)
+	}
+	oneShot.setDeadline = func(*os.File, time.Time) error { return os.ErrNoDeadline }
+
+	outcome := respondWithGuard(t.Context(), t, backend, "hi", respondLimit)
+	if outcome.err != nil {
+		t.Fatalf("Respond error = %v, want nil", outcome.err)
+	}
+	if outcome.text != "ok" {
+		t.Fatalf("Respond text = %q, want ok", outcome.text)
 	}
 }
