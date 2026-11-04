@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,6 +66,25 @@ func TestDiscoverOtherFailureIsAnError(t *testing.T) {
 	}
 }
 
+func TestDiscoverIgnoresProgressAndUsageLines(t *testing.T) {
+	body := `printf '%s\n' "Loading models..." "Usage:" "Retrying" "Retrying in 2s" "composer-2 - Composer 2" "gpt-5-mini"`
+	models, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].ID != "composer-2" || models[1].ID != "gpt-5-mini" {
+		t.Fatalf("models = %+v, want only the two real models", models)
+	}
+}
+
+func TestDiscoverOversizedListingIsAnError(t *testing.T) {
+	body := `head -c 300000 /dev/zero | tr '\0' 'x'`
+	_, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})
+	if _, ok := errors.AsType[*OutputTooLargeError](err); !ok {
+		t.Fatalf("err = %v, want OutputTooLargeError", err)
+	}
+}
+
 func TestDiscoverEmptyListingListsNothing(t *testing.T) {
 	body := `printf '%s\n' "No models available for this account."`
 	models, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})
@@ -95,7 +115,7 @@ func TestDiscoverMissingBinaryIsAnError(t *testing.T) {
 }
 
 func TestParseModelLineRejectsNoise(t *testing.T) {
-	for _, line := range []string{"", "Available models", "Tip: use --model <id>", "Error: boom", "two words here"} {
+	for _, line := range []string{"", "Available models", "Tip: use --model <id>", "Error: boom", "two words here", "Loading models...", "Usage:", "Retrying", "Retrying in 2s", "No models available"} {
 		if _, ok := parseModelLine(line); ok {
 			t.Fatalf("line %q parsed as a model", line)
 		}

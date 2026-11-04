@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,25 +15,47 @@ const (
 	defaultDiscoverCmd = "cursor-agent"
 	authRequiredText   = "authentication required"
 	discoverWaitDelay  = 2 * time.Second
+	discoverOutputMax  = 256 << 10
 )
+
+var modelIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+
+type cappedBuffer struct {
+	data     bytes.Buffer
+	exceeded bool
+}
+
+func (b *cappedBuffer) Write(data []byte) (int, error) {
+	accepted := min(len(data), max(discoverOutputMax-b.data.Len(), 0))
+	if accepted < len(data) {
+		b.exceeded = true
+	}
+	if _, err := b.data.Write(data[:accepted]); err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
 
 func discover(ctx context.Context, access contracts.DiscoveryAccess) ([]contracts.ModelSpec, error) {
 	command := strings.TrimSpace(access.Getenv("CURSOR_CMD"))
 	if command == "" {
 		command = defaultDiscoverCmd
 	}
-	var output bytes.Buffer
+	var output cappedBuffer
 	cmd := turnCommand(ctx, []string{command, "models"}, "", &output)
 	cmd.Stdout = &output
 	cmd.WaitDelay = discoverWaitDelay
 	runErr := cmd.Run()
-	if isAuthRequired(output.String()) {
+	if isAuthRequired(output.data.String()) {
 		return nil, nil
 	}
 	if runErr != nil {
 		return nil, fmt.Errorf("cursor-agent models: %w", runErr)
 	}
-	return parseModelsOutput(output.String()), nil
+	if output.exceeded {
+		return nil, &OutputTooLargeError{Limit: discoverOutputMax}
+	}
+	return parseModelsOutput(output.data.String()), nil
 }
 
 func isAuthRequired(output string) bool {
@@ -54,27 +77,16 @@ func parseModelsOutput(output string) []contracts.ModelSpec {
 }
 
 func parseModelLine(line string) (contracts.ModelSpec, bool) {
-	if isListingNoise(line) {
-		return contracts.ModelSpec{}, false
-	}
 	var modelID, label string
 	if before, after, found := strings.Cut(line, " - "); found {
 		modelID, label = strings.TrimSpace(before), stripMarkers(after)
 	} else {
 		modelID = stripMarkers(line)
 	}
-	if modelID == "" || strings.ContainsAny(modelID, " ()") {
+	if !modelIDPattern.MatchString(modelID) {
 		return contracts.ModelSpec{}, false
 	}
 	return contracts.ModelSpec{ID: modelID, Label: label, Arg: modelID, Route: contracts.RouteNative}, true
-}
-
-func isListingNoise(line string) bool {
-	return line == "" ||
-		strings.HasPrefix(line, "Available models") ||
-		strings.HasPrefix(line, "No models available") ||
-		strings.HasPrefix(line, "Tip:") ||
-		strings.HasPrefix(line, "Error")
 }
 
 func stripMarkers(text string) string {
