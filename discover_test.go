@@ -77,6 +77,28 @@ func TestDiscoverIgnoresProgressAndUsageLines(t *testing.T) {
 	}
 }
 
+func TestDiscoverKeepsStderrOutOfTheListing(t *testing.T) {
+	body := `printf '%s\n' "stale-model - Stale" >&2; printf '%s\n' "gpt-5-mini"`
+	models, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].ID != "gpt-5-mini" {
+		t.Fatalf("models = %+v, want only the stdout model", models)
+	}
+}
+
+func TestDiscoverAcceptsUppercaseModelIDs(t *testing.T) {
+	body := `printf '%s\n' "Claude-Opus-4 - Opus 4" "GPT-5"`
+	models, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].ID != "Claude-Opus-4" || models[1].ID != "GPT-5" {
+		t.Fatalf("models = %+v", models)
+	}
+}
+
 func TestDiscoverOversizedListingIsAnError(t *testing.T) {
 	body := `head -c 300000 /dev/zero | tr '\0' 'x'`
 	_, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})

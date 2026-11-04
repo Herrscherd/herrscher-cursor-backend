@@ -18,7 +18,7 @@ const (
 	discoverOutputMax  = 256 << 10
 )
 
-var modelIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+var modelIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 type cappedBuffer struct {
 	data     bytes.Buffer
@@ -41,21 +41,21 @@ func discover(ctx context.Context, access contracts.DiscoveryAccess) ([]contract
 	if command == "" {
 		command = defaultDiscoverCmd
 	}
-	var output cappedBuffer
-	cmd := turnCommand(ctx, []string{command, "models"}, "", &output)
-	cmd.Stdout = &output
+	var stdout, stderr cappedBuffer
+	cmd := turnCommand(ctx, []string{command, "models"}, "", &stderr)
+	cmd.Stdout = &stdout
 	cmd.WaitDelay = discoverWaitDelay
 	runErr := cmd.Run()
-	if isAuthRequired(output.data.String()) {
+	if isAuthRequired(stdout.data.String()) || isAuthRequired(stderr.data.String()) {
 		return nil, nil
 	}
 	if runErr != nil {
 		return nil, fmt.Errorf("cursor-agent models: %w", runErr)
 	}
-	if output.exceeded {
+	if stdout.exceeded {
 		return nil, &OutputTooLargeError{Limit: discoverOutputMax}
 	}
-	return parseModelsOutput(output.data.String()), nil
+	return parseModelsOutput(stdout.data.String()), nil
 }
 
 func isAuthRequired(output string) bool {
@@ -78,15 +78,23 @@ func parseModelsOutput(output string) []contracts.ModelSpec {
 
 func parseModelLine(line string) (contracts.ModelSpec, bool) {
 	var modelID, label string
-	if before, after, found := strings.Cut(line, " - "); found {
+	before, after, labelled := strings.Cut(line, " - ")
+	if labelled {
 		modelID, label = strings.TrimSpace(before), stripMarkers(after)
 	} else {
 		modelID = stripMarkers(line)
 	}
-	if !modelIDPattern.MatchString(modelID) {
+	if !isModelID(modelID, labelled) {
 		return contracts.ModelSpec{}, false
 	}
 	return contracts.ModelSpec{ID: modelID, Label: label, Arg: modelID, Route: contracts.RouteNative}, true
+}
+
+func isModelID(id string, labelled bool) bool {
+	if !modelIDPattern.MatchString(id) {
+		return false
+	}
+	return labelled || strings.ToLower(id) == id || strings.ContainsAny(id, "0123456789-.")
 }
 
 func stripMarkers(text string) string {
