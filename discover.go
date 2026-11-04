@@ -90,11 +90,11 @@ func parseModelLine(line string) (contracts.ModelSpec, bool) {
 	return contracts.ModelSpec{ID: modelID, Label: label, Arg: modelID, Route: contracts.RouteNative}, true
 }
 
-func isModelID(id string, labelled bool) bool {
-	if !modelIDPattern.MatchString(id) {
+func isModelID(modelID string, labelled bool) bool {
+	if !modelIDPattern.MatchString(modelID) {
 		return false
 	}
-	return labelled || strings.ToLower(id) == id || strings.ContainsAny(id, "0123456789-.")
+	return labelled || strings.ToLower(modelID) == modelID || strings.ContainsAny(modelID, "0123456789-.")
 }
 
 func stripMarkers(text string) string {
