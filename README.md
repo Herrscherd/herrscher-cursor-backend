@@ -69,6 +69,27 @@ ends when the child exits or when its context is cancelled. Outside Unix
 (`process_other.go`) the group kill is absent and only the direct child is
 killed.
 
+## Compaction
+
+Cursor does not implement `contracts.Compactor`, and its manifest does not declare
+`Capabilities.Compactor`. The host therefore refuses a compaction of a Cursor
+session before it sends anything, and no context is shortened.
+
+The reason is in the CLI, as documented. The
+[slash commands reference](https://cursor.com/docs/cli/reference/slash-commands)
+lists `/summarize`, with `/compress` as an alias, described as "Summarize the
+conversation to reduce context". That page does not say that slash commands run
+in print mode, and the [headless reference](https://cursor.com/docs/cli/headless)
+covers `-p` with the `text`, `json` and `stream-json` formats without mentioning
+slash commands or compaction. In the installed binary, `/summarize` runs through
+the interactive interface's `onSummarize` callback. Nothing in the documentation
+shows that a `/compress` sent on stdin is run as a compaction rather than read as
+an ordinary prompt, so this backend does not send one and report a success it
+cannot check.
+
+The port is to be added when the CLI documents a compaction that a headless
+caller can drive.
+
 ## Model catalog
 
 `Models` (`models.go`) is published through `Manifest.Models`, so the host can
