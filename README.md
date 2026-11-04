@@ -71,24 +71,21 @@ killed.
 
 ## Compaction
 
-Cursor does not implement `contracts.Compactor`, and its manifest does not declare
-`Capabilities.Compactor`. The host therefore refuses a compaction of a Cursor
-session before it sends anything, and no context is shortened.
+The backend does not implement `contracts.Compactor` and does not declare
+`Capabilities.Compactor`. The documentation describes no compaction that runs in
+print mode (`-p`), so the backend declares no compaction capability. The contract
+asks the host to refuse a compaction of a backend that lacks the port, before
+anything is sent.
 
-The reason is in the CLI, as documented. The
-[slash commands reference](https://cursor.com/docs/cli/reference/slash-commands)
+The [slash commands reference](https://cursor.com/docs/cli/reference/slash-commands)
 lists `/summarize`, with `/compress` as an alias, described as "Summarize the
 conversation to reduce context". That page does not say that slash commands run
-in print mode, and the [headless reference](https://cursor.com/docs/cli/headless)
-covers `-p` with the `text`, `json` and `stream-json` formats without mentioning
-slash commands or compaction. In the installed binary, `/summarize` runs through
-the interactive interface's `onSummarize` callback. Nothing in the documentation
-shows that a `/compress` sent on stdin is run as a compaction rather than read as
-an ordinary prompt, so this backend does not send one and report a success it
-cannot check.
+in print mode. The [headless reference](https://cursor.com/docs/cli/headless)
+covers `-p` with the `text`, `json` and `stream-json` formats and does not mention
+slash commands or compaction.
 
-The port is to be added when the CLI documents a compaction that a headless
-caller can drive.
+The port is to be added when the documentation describes a compaction that a
+headless caller can drive.
 
 ## Model catalog
 
