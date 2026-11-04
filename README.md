@@ -69,6 +69,24 @@ ends when the child exits or when its context is cancelled. Outside Unix
 (`process_other.go`) the group kill is absent and only the direct child is
 killed.
 
+## Compaction
+
+The backend does not implement `contracts.Compactor` and does not declare
+`Capabilities.Compactor`. The documentation describes no compaction that runs in
+print mode (`-p`), so the backend declares no compaction capability. The contract
+asks the host to refuse a compaction of a backend that lacks the port, before
+anything is sent.
+
+The [slash commands reference](https://cursor.com/docs/cli/reference/slash-commands)
+lists `/summarize`, with `/compress` as an alias, described as "Summarize the
+conversation to reduce context". That page does not say that slash commands run
+in print mode. The [headless reference](https://cursor.com/docs/cli/headless)
+covers `-p` with the `text`, `json` and `stream-json` formats and does not mention
+slash commands or compaction.
+
+The port is to be added when the documentation describes a compaction that a
+headless caller can drive.
+
 ## Model catalog
 
 `Models` (`models.go`) is published through `Manifest.Models`, so the host can

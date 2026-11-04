@@ -35,6 +35,21 @@ func TestDeclaresItCannotGate(t *testing.T) {
 	t.Fatal("cursor backend did not self-register into contracts.Default")
 }
 
+func TestManifestDeclaresNoCompactor(t *testing.T) {
+	if cursorPlugin(t).Manifest.Capabilities.Compactor {
+		t.Fatal("cursor declares Capabilities.Compactor, but it implements no compaction")
+	}
+}
+
+func TestRespondersDoNotImplementCompactor(t *testing.T) {
+	if _, ok := any(&streamResponder{}).(contracts.Compactor); ok {
+		t.Fatal("streamResponder implements contracts.Compactor, but cursor-agent offers no compaction a headless caller can drive")
+	}
+	if _, ok := any(&oneShotResponder{}).(contracts.Compactor); ok {
+		t.Fatal("oneShotResponder implements contracts.Compactor, but cursor-agent offers no compaction a headless caller can drive")
+	}
+}
+
 func cursorPlugin(t *testing.T) contracts.Plugin {
 	t.Helper()
 	plugins := contracts.Default.Backends()
