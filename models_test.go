@@ -37,7 +37,7 @@ func TestNativePricingFollowsPublishedTable(t *testing.T) {
 		window                       int
 	}{
 		{"claude-opus-5-5-high", 4, 0.2, 5, 20, 1_000_000},
-		{"claude-fable-5-1-thinking-high", 10, 0.25, 12.5, 50, 0},
+		{"claude-fable-5-1-thinking-high", 10, 0.25, 12.5, 50, 1_000_000},
 		{"claude-fable-5-thinking-high", 10, 1, 12.5, 50, 0},
 		{"claude-sonnet-5-thinking-high", 2, 0.2, 2.5, 10, 1_000_000},
 		{"claude-opus-5-thinking-high", 5, 0.5, 6.25, 25, 1_000_000},

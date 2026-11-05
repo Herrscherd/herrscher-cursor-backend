@@ -29,7 +29,7 @@ func Models() []contracts.ModelSpec {
 	return []contracts.ModelSpec{
 		{ID: "auto", Label: "Auto", Arg: "auto", Route: contracts.RouteNative},
 		{ID: "claude-opus-5-5-high", Label: "Opus 5.5", Arg: "claude-opus-5-5-high", Route: contracts.RouteNative, InputPrice: opus55In, OutputPrice: opus55Out, CacheReadPrice: opus55Cached, CacheWritePrice: opus55Write, ContextWindow: context1M},
-		{ID: "claude-fable-5-1-thinking-high", Label: "Fable 5.1 Thinking", Arg: "claude-fable-5-1-thinking-high", Route: contracts.RouteNative, InputPrice: fable51In, OutputPrice: fable51Out, CacheReadPrice: fable51Cached, CacheWritePrice: fable51Write},
+		{ID: "claude-fable-5-1-thinking-high", Label: "Fable 5.1 Thinking", Arg: "claude-fable-5-1-thinking-high", Route: contracts.RouteNative, InputPrice: fable51In, OutputPrice: fable51Out, CacheReadPrice: fable51Cached, CacheWritePrice: fable51Write, ContextWindow: context1M},
 		{ID: "claude-sonnet-5-thinking-high", Label: "Sonnet 5 Thinking", Arg: "claude-sonnet-5-thinking-high", Route: contracts.RouteNative, InputPrice: sonnet5In, OutputPrice: sonnet5Out, CacheReadPrice: sonnet5Cached, CacheWritePrice: sonnet5Write, ContextWindow: context1M, Hidden: true},
 		{ID: "claude-opus-5-thinking-high", Label: "Opus 5 Thinking", Arg: "claude-opus-5-thinking-high", Route: contracts.RouteNative, InputPrice: opus5In, OutputPrice: opus5Out, CacheReadPrice: opus5Cached, CacheWritePrice: opus5Write, ContextWindow: context1M, Hidden: true},
 		{ID: "claude-opus-5-high", Label: "Opus 5", Arg: "claude-opus-5-high", Route: contracts.RouteNative, InputPrice: opus5In, OutputPrice: opus5Out, CacheReadPrice: opus5Cached, CacheWritePrice: opus5Write, ContextWindow: context1M, Hidden: true},

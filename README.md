@@ -101,11 +101,14 @@ bug.
 Prices are USD per million tokens (input, cached input, cache write, output) from
 the model table at https://cursor.com/docs/models. They are Cursor's own list
 prices, not the upstream provider's. A cache write is set only where the table
-lists one. The `-high` variants carry the price of their base model, because
-Cursor does not price by reasoning effort.
+lists one. The write prices of Opus 5, Opus 4.8 and Sonnet 5 are in that table,
+and they match Anthropic's 5-minute cache write price (6.25, 6.25 and 2.5). The
+`-high` variants carry the price of their base model, because Cursor does not
+price by reasoning effort.
 
-Context windows are set only where the table says "Up to 1M" (Opus 4.8, Opus 5,
-Opus 5.5, Sonnet 5, Kimi K3, GPT-5.5, GPT-5.6 Sol, Terra and Luna). Every other
+Context windows are 1M where the table says "Up to 1M" (Opus 4.8, Opus 5, Opus 5.5,
+Sonnet 5, Kimi K3, GPT-5.5, GPT-5.6 Sol, Terra and Luna) and for Fable 5.1, where
+the table says "Not stated" but Anthropic's model page gives 1M tokens. Every other
 window is 0, which means unknown: Cursor marks them "Not published", or ties them
 to a plan (Grok 4.7 is 256K on Plus).
 
@@ -117,14 +120,20 @@ What the catalog does not model:
 
 - Long-context pricing. GPT-5.5 and the GPT-5.6 models cost 2x input above their
   standard rate for long context up to 1M tokens, and the page gives no threshold
-  for them. Grok 4.7 costs 2x above 256K input tokens. Fast-mode and Max Mode
-  rates are not listed. The contract has no tier field, so every entry carries
-  the standard rate only.
-- Fast variants of any model, which are separate table rows.
+  for them. Grok 4.7 costs 2x above 256K input tokens. The contract has no tier
+  field, so every entry carries the standard rate only.
+- Fast variants of any model, which are separate rows of the table. Their rates
+  are not modelled.
 - The GPT-5.6 Sol promotion. Cursor states its promotional pricing (the $4 input,
   $5 cache write, $0.4 cached input and $20 output in the catalog) runs through
   21 November 2026. The page gives no standard price after that date, so the
   entry must be updated once Cursor publishes it.
+- Sonnet 5.5. The table lists it at $2 input, $0.1 cached input, $2.5 cache write,
+  $10 output and 1M context, but it is not in this catalog: its `cursor-agent` ID
+  could not be checked. Grok 4.6 is not added for the same reason, and the model
+  table fetched for this round has no Grok row, so its $2 / $0.5 / $6 rates are
+  not re-confirmed here. `cursor-agent models` needs a login to list the IDs.
+  Both are added once their IDs are confirmed.
 
 ## Development
 
