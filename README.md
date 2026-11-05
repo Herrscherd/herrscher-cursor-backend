@@ -116,6 +116,13 @@ a `CGO_ENABLED=0` build and govulncheck. Run it with `GOWORK=off`.
 GOWORK=off scripts/check.sh
 ```
 
+## Windows process tree
+
+On Windows the child tree is stopped with `taskkill /T /F`, a snapshot taken at kill
+time. No Job Object is used, so a grandchild started after that snapshot, or one that
+detaches before it, can outlive the backend. The Windows CI job runs the tests that do
+not need a shell script, so the process-group tests stay on Unix.
+
 ## Further reading
 
 - [Herrscher docs](https://github.com/Herrscherd/herrscher-docs), page

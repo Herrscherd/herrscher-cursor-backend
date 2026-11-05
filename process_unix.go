@@ -4,6 +4,7 @@ package cursor
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -11,12 +12,12 @@ import (
 func configureChild(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		return killGroup(cmd.Process.Pid)
+		return killGroup(cmd.Process)
 	}
 }
 
-func killGroup(pid int) error {
-	err := syscall.Kill(-pid, syscall.SIGKILL)
+func killGroup(process *os.Process) error {
+	err := syscall.Kill(-process.Pid, syscall.SIGKILL)
 	if err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}

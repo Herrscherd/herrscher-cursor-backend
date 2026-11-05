@@ -33,6 +33,7 @@ func init() {
 				GateWhy: "cursor-agent exposes no permission hook",
 			},
 		},
+		Discover: discover,
 		Backend: func(ctx context.Context, cfg contracts.PluginConfig) (contracts.Backend, error) {
 			kind, err := backendKindSetting(cfg)
 			if err != nil {

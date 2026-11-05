@@ -295,3 +295,16 @@ func TestOneShotKeepsOutputWhenEscapedHolderHasNoReadDeadline(t *testing.T) {
 		t.Fatalf("Respond text = %q, want ok", outcome.text)
 	}
 }
+
+func TestDiscoverDeadlineKillsWholeProcessGroup(t *testing.T) {
+	pidPath := grandchildPidFile(t)
+	stub := writeStubScript(t, fmt.Sprintf("sleep 25 &\necho $! > %s\nsleep 30", pidPath))
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)
+	defer cancel()
+
+	_, err := discover(ctx, contracts.DiscoveryAccess{Getenv: envWith(stub)})
+	if err == nil {
+		t.Fatal("a hanging listing returned no error")
+	}
+	assertGrandchildGone(t, readGrandchildPid(t, pidPath))
+}
