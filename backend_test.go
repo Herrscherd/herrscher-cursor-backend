@@ -155,7 +155,7 @@ func TestParseResult(t *testing.T) {
 
 func TestWithAttachments(t *testing.T) {
 	got := withAttachments("look", []string{"/tmp/a.png", "/tmp/b.png"})
-	want := "look\n\n[Image jointe : /tmp/a.png]\n[Image jointe : /tmp/b.png]"
+	want := "look\n\n[Attached image: /tmp/a.png]\n[Attached image: /tmp/b.png]"
 	if got != want {
 		t.Fatalf("attachments = %q, want %q", got, want)
 	}
