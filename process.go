@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -63,7 +64,7 @@ func startTurn(ctx context.Context, argv []string, dir, prompt string, stderr io
 	go proc.writePrompt(prompt)
 	go proc.reap()
 	if childEnds != nil {
-		return nil, errors.Join(childEnds, killGroup(cmd.Process.Pid), proc.wait(), stdoutReader.Close())
+		return nil, errors.Join(childEnds, killGroup(cmd.Process), proc.wait(), stdoutReader.Close())
 	}
 	return proc, nil
 }
@@ -83,11 +84,20 @@ func isStdinGone(err error) bool {
 
 func (proc *turnProcess) reap() {
 	waitErr := proc.cmd.Wait()
-	killErr := killGroup(proc.cmd.Process.Pid)
+	killErr := killGroup(proc.cmd.Process)
 	closeQuietly(proc.stdin)
 	<-proc.prompted
 	proc.waitErr = errors.Join(waitErr, killErr, proc.promptErr)
 	close(proc.exited)
+}
+
+func killAfterTreeFailure(process *os.Process, treeErr error) error {
+	slog.Warn("taskkill failed, killing the cursor-agent process only", "error", treeErr)
+	err := process.Kill()
+	if err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	return nil
 }
 
 func closeQuietly(file io.Closer) {

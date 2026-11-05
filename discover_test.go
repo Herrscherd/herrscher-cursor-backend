@@ -1,15 +1,21 @@
 package cursor
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
+
+const fakeHangEnv = "HERRSCHER_FAKE_CURSOR_HANG"
 
 func fakeCursorAgent(t *testing.T, body string) string {
 	t.Helper()
@@ -29,7 +35,7 @@ func envWith(command string) func(string) string {
 	}
 }
 
-const listingBody = `printf '%b\n' "Available models" "" "\033[32mauto\033[0m - Auto (current)" "composer-2 - Composer 2 (default)" "gpt-5-mini" "" "Tip: use --model <id> to switch."`
+const listingBody = `printf '%b\n' "Available models" "" "\033[32mauto\033[0m - Auto (current)" "composer-2 - Composer 2 (default)" "gpt-5-mini - GPT-5 mini" "" "Tip: use --model <id> to switch."`
 
 func TestDiscoverParsesListing(t *testing.T) {
 	models, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, listingBody))})
@@ -45,7 +51,7 @@ func TestDiscoverParsesListing(t *testing.T) {
 	if models[1].ID != "composer-2" || models[1].Label != "Composer 2" {
 		t.Fatalf("second model = %+v", models[1])
 	}
-	if models[2].ID != "gpt-5-mini" || models[2].Label != "" {
+	if models[2].ID != "gpt-5-mini" || models[2].Label != "GPT-5 mini" {
 		t.Fatalf("third model = %+v", models[2])
 	}
 }
@@ -66,8 +72,8 @@ func TestDiscoverOtherFailureIsAnError(t *testing.T) {
 	}
 }
 
-func TestDiscoverIgnoresProgressAndUsageLines(t *testing.T) {
-	body := `printf '%s\n' "Loading models..." "Usage:" "Retrying" "Retrying in 2s" "composer-2 - Composer 2" "gpt-5-mini"`
+func TestDiscoverIgnoresStatusAndLabelledNoise(t *testing.T) {
+	body := `printf '%s\n' "Loading models..." "Usage:" "Retrying" "Retrying in 2s" "Warning - rate limited" "Error - quota exceeded" "Tip - run cursor-agent login" "Note - see docs" "Models - available" "composer-2 - Composer 2" "gpt-5-mini - GPT-5 mini"`
 	models, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +84,7 @@ func TestDiscoverIgnoresProgressAndUsageLines(t *testing.T) {
 }
 
 func TestDiscoverKeepsStderrOutOfTheListing(t *testing.T) {
-	body := `printf '%s\n' "stale-model - Stale" >&2; printf '%s\n' "gpt-5-mini"`
+	body := `printf '%s\n' "stale-model - Stale" >&2; printf '%s\n' "gpt-5-mini - GPT-5 mini"`
 	models, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +95,7 @@ func TestDiscoverKeepsStderrOutOfTheListing(t *testing.T) {
 }
 
 func TestDiscoverAcceptsUppercaseModelIDs(t *testing.T) {
-	body := `printf '%s\n' "Claude-Opus-4 - Opus 4" "GPT-5"`
+	body := `printf '%s\n' "Claude-Opus-4 - Opus 4" "GPT-5 - GPT 5"`
 	models, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(fakeCursorAgent(t, body))})
 	if err != nil {
 		t.Fatal(err)
@@ -115,8 +121,26 @@ func TestDiscoverEmptyListingListsNothing(t *testing.T) {
 	}
 }
 
+func TestMain(m *testing.M) {
+	if os.Getenv(fakeHangEnv) == "1" {
+		time.Sleep(time.Hour)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func fakeHangingSelf(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(fakeHangEnv, "1")
+	return self
+}
+
 func TestDiscoverStopsWhenDeadlinePasses(t *testing.T) {
-	command := fakeCursorAgent(t, "sleep 30")
+	command := fakeHangingSelf(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	started := time.Now()
@@ -129,6 +153,14 @@ func TestDiscoverStopsWhenDeadlinePasses(t *testing.T) {
 	}
 }
 
+func TestDiscoverGatewayOnlyNeverRunsTheCLI(t *testing.T) {
+	access := contracts.DiscoveryAccess{Policy: contracts.PolicyGatewayOnly, Getenv: envWith(filepath.Join(t.TempDir(), "absent"))}
+	models, err := discover(context.Background(), access)
+	if err != nil || len(models) != 0 {
+		t.Fatalf("gateway-only policy ran the CLI: models=%v err=%v", models, err)
+	}
+}
+
 func TestDiscoverMissingBinaryIsAnError(t *testing.T) {
 	_, err := discover(context.Background(), contracts.DiscoveryAccess{Getenv: envWith(filepath.Join(t.TempDir(), "absent"))})
 	if err == nil {
@@ -137,9 +169,21 @@ func TestDiscoverMissingBinaryIsAnError(t *testing.T) {
 }
 
 func TestParseModelLineRejectsNoise(t *testing.T) {
-	for _, line := range []string{"", "Available models", "Tip: use --model <id>", "Error: boom", "two words here", "Loading models...", "Usage:", "Retrying", "Retrying in 2s", "No models available"} {
+	for _, line := range []string{
+		"", "Available models", "Tip: use --model <id>", "Error: boom", "two words here", "Loading models...", "Usage:",
+		"Retrying", "retrying", "Retrying in 2s", "No models available", "gpt-5-mini",
+		"Warning - rate limited", "Error - quota exceeded", "Tip - run cursor-agent login", "Note - see docs", "Models - available",
+	} {
 		if _, ok := parseModelLine(line); ok {
 			t.Fatalf("line %q parsed as a model", line)
+		}
+	}
+}
+
+func TestParseModelLineAcceptsUppercaseWithDigitOrDash(t *testing.T) {
+	for _, line := range []string{"Claude-Opus-4 - Opus 4", "GPT-5 - GPT 5", "Gemini-Flash - Gemini Flash", "GPT-Mini - Mini"} {
+		if _, ok := parseModelLine(line); !ok {
+			t.Fatalf("line %q refused as a model", line)
 		}
 	}
 }
@@ -148,4 +192,30 @@ func TestStripANSIRemovesEscapes(t *testing.T) {
 	if got := stripANSI("\x1b[1;32mauto\x1b[0m - Auto"); got != "auto - Auto" {
 		t.Fatalf("stripANSI = %q", got)
 	}
+}
+
+func TestKillAfterTreeFailureLogsAndKillsProcess(t *testing.T) {
+	logged := captureLog(t)
+	cmd := exec.CommandContext(context.Background(), fakeHangingSelf(t), "models")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := killAfterTreeFailure(cmd.Process, errors.New("taskkill refused")); err != nil {
+		t.Fatal(err)
+	}
+	if waitErr := cmd.Wait(); waitErr == nil {
+		t.Fatal("process survived its kill")
+	}
+	if !strings.Contains(logged.String(), "taskkill failed") {
+		t.Fatalf("fallback kill not logged: %s", logged)
+	}
+}
+
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &buf
 }

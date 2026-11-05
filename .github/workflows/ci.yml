@@ -29,4 +29,4 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Output grace and prompt writer on Windows
-        run: go test -race -run 'ReadOutputGrace|WritePrompt' .
+        run: go test -race -run 'ReadOutputGrace|WritePrompt|TestDiscoverStopsWhenDeadlinePasses|TestKillAfterTreeFailure' .

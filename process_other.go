@@ -4,7 +4,6 @@ package cursor
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"strconv"
@@ -12,20 +11,14 @@ import (
 
 func configureChild(cmd *exec.Cmd) {
 	cmd.Cancel = func() error {
-		return killGroup(cmd.Process.Pid)
+		return killGroup(cmd.Process)
 	}
 }
 
-func killGroup(pid int) error {
-	if exec.CommandContext(context.Background(), "taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run() == nil {
+func killGroup(process *os.Process) error {
+	treeErr := exec.CommandContext(context.Background(), "taskkill", "/T", "/F", "/PID", strconv.Itoa(process.Pid)).Run()
+	if treeErr == nil {
 		return nil
 	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
-	if err := process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return err
-	}
-	return nil
+	return killAfterTreeFailure(process, treeErr)
 }

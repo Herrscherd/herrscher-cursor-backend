@@ -37,6 +37,9 @@ func (b *cappedBuffer) Write(data []byte) (int, error) {
 }
 
 func discover(ctx context.Context, access contracts.DiscoveryAccess) ([]contracts.ModelSpec, error) {
+	if !access.Policy.Allows(contracts.RouteNative) {
+		return nil, nil
+	}
 	command := strings.TrimSpace(access.Getenv("CURSOR_CMD"))
 	if command == "" {
 		command = defaultDiscoverCmd
@@ -77,24 +80,22 @@ func parseModelsOutput(output string) []contracts.ModelSpec {
 }
 
 func parseModelLine(line string) (contracts.ModelSpec, bool) {
-	var modelID, label string
 	before, after, labelled := strings.Cut(line, " - ")
-	if labelled {
-		modelID, label = strings.TrimSpace(before), stripMarkers(after)
-	} else {
-		modelID = stripMarkers(line)
-	}
-	if !isModelID(modelID, labelled) {
+	if !labelled {
 		return contracts.ModelSpec{}, false
 	}
-	return contracts.ModelSpec{ID: modelID, Label: label, Arg: modelID, Route: contracts.RouteNative}, true
+	modelID := strings.TrimSpace(before)
+	if !isModelID(modelID) {
+		return contracts.ModelSpec{}, false
+	}
+	return contracts.ModelSpec{ID: modelID, Label: stripMarkers(after), Arg: modelID, Route: contracts.RouteNative}, true
 }
 
-func isModelID(modelID string, labelled bool) bool {
+func isModelID(modelID string) bool {
 	if !modelIDPattern.MatchString(modelID) {
 		return false
 	}
-	return labelled || strings.ToLower(modelID) == modelID || strings.ContainsAny(modelID, "0123456789-.")
+	return strings.ToLower(modelID) == modelID || strings.ContainsAny(modelID, "0123456789-")
 }
 
 func stripMarkers(text string) string {
