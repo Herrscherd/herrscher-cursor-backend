@@ -120,20 +120,22 @@ What the catalog does not model:
 
 - Long-context pricing. GPT-5.5 and the GPT-5.6 models cost 2x input above their
   standard rate for long context up to 1M tokens, and the page gives no threshold
-  for them. Grok 4.7 costs 2x above 256K input tokens. The contract has no tier
-  field, so every entry carries the standard rate only.
+  for them. Grok 4.7 costs 2x standard rates above 256K input tokens, up to 500K.
+  The contract has no tier field, so every entry carries the standard rate only.
 - Fast variants of any model, which are separate rows of the table. Their rates
   are not modelled.
 - The GPT-5.6 Sol promotion. Cursor states its promotional pricing (the $4 input,
   $5 cache write, $0.4 cached input and $20 output in the catalog) runs through
   21 November 2026. The page gives no standard price after that date, so the
   entry must be updated once Cursor publishes it.
-- Sonnet 5.5. The table lists it at $2 input, $0.1 cached input, $2.5 cache write,
-  $10 output and 1M context, but it is not in this catalog: its `cursor-agent` ID
-  could not be checked. Grok 4.6 is not added for the same reason, and the model
-  table fetched for this round has no Grok row, so its $2 / $0.5 / $6 rates are
-  not re-confirmed here. `cursor-agent models` needs a login to list the IDs.
-  Both are added once their IDs are confirmed.
+- The Grok 4.7 500k variants, which the table lists as separate rows: Grok 4.7 500k
+  at $4 input, $1 cached input and $12 output, and Grok 4.7 500k (Fast) at $6, $1.5
+  and $18. The catalog models only the Grok 4.7 row.
+- Sonnet 5.5 and Grok 4.6. The table lists Sonnet 5.5 at $2 input, $0.1 cached
+  input, $2.5 cache write, $10 output and a 1M context, and Grok 4.6 at $2, $0.5 and
+  $6 with no window. Neither is in this catalog, because their `cursor-agent` IDs
+  could not be confirmed: `cursor-agent models` needs a login to list them. Both are
+  added once their IDs are confirmed.
 
 ## Development
 
