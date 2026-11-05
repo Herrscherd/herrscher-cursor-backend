@@ -219,3 +219,16 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	return &buf
 }
+
+func TestDiscoveredCursorModelsCarryNoPricingOrWindow(t *testing.T) {
+	models := parseModelsOutput("claude-opus-5-5-high - Opus 5.5\ngpt-5.6-sol-high - GPT-5.6 Sol\n")
+	if len(models) != 2 {
+		t.Fatalf("models = %+v", models)
+	}
+	for i := range models {
+		m := models[i]
+		if m.InputPrice != 0 || m.OutputPrice != 0 || m.CacheReadPrice != 0 || m.CacheWritePrice != 0 || m.ContextWindow != 0 {
+			t.Errorf("discovered model %q carries pricing or window: %+v", m.ID, m)
+		}
+	}
+}

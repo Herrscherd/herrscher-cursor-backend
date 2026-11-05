@@ -98,6 +98,45 @@ under the `gateway-only` route policy therefore filters the whole catalog out an
 cursor disappears from the selector entirely. That is intended, not a packaging
 bug.
 
+Prices are USD per million tokens (input, cached input, cache write, output) from
+the model table at https://cursor.com/docs/models. They are Cursor's own list
+prices, not the upstream provider's. A cache write is set only where the table
+lists one. The write prices of Opus 5, Opus 4.8 and Sonnet 5 are in that table,
+and they match Anthropic's 5-minute cache write price (6.25, 6.25 and 2.5). The
+`-high` variants carry the price of their base model, because Cursor does not
+price by reasoning effort.
+
+Context windows are 1M where the table says "Up to 1M" (Opus 4.8, Opus 5, Opus 5.5,
+Sonnet 5, Kimi K3, GPT-5.5, GPT-5.6 Sol, Terra and Luna) and for Fable 5.1, where
+the table says "Not stated" but Anthropic's model page gives 1M tokens. Every other
+window is 0, which means unknown: Cursor marks them "Not published", or ties them
+to a plan (Grok 4.7 is 256K on Plus).
+
+Models are hidden when a newer model replaces them in the table (Opus 4.8, Opus 5,
+Sonnet 5, Fable 5, GPT-5.2, GPT-5.3 Codex, GPT-5.5, Grok 4.5), and when Cursor
+marks them "Hidden by default" (Gemini 3.7 Flash, GLM 5.2, Kimi K3).
+
+What the catalog does not model:
+
+- Long-context pricing. GPT-5.5 and the GPT-5.6 models cost 2x input above their
+  standard rate for long context up to 1M tokens, and the page gives no threshold
+  for them. Grok 4.7 costs 2x standard rates above 256K input tokens, up to 500K.
+  The contract has no tier field, so every entry carries the standard rate only.
+- Fast variants of any model, which are separate rows of the table. Their rates
+  are not modelled.
+- The GPT-5.6 Sol promotion. Cursor states its promotional pricing (the $4 input,
+  $5 cache write, $0.4 cached input and $20 output in the catalog) runs through
+  21 November 2026. The page gives no standard price after that date, so the
+  entry must be updated once Cursor publishes it.
+- The Grok 4.7 500k variants, which the table lists as separate rows: Grok 4.7 500k
+  at $4 input, $1 cached input and $12 output, and Grok 4.7 500k (Fast) at $6, $1.5
+  and $18. The catalog models only the Grok 4.7 row.
+- Sonnet 5.5 and Grok 4.6. The table lists Sonnet 5.5 at $2 input, $0.1 cached
+  input, $2.5 cache write, $10 output and a 1M context, and Grok 4.6 at $2, $0.5 and
+  $6 with no window. Neither is in this catalog, because their `cursor-agent` IDs
+  could not be confirmed: `cursor-agent models` needs a login to list them. Both are
+  added once their IDs are confirmed.
+
 ## Development
 
 This module sits outside the parent `go.work`, so local commands need
