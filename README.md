@@ -98,6 +98,34 @@ under the `gateway-only` route policy therefore filters the whole catalog out an
 cursor disappears from the selector entirely. That is intended, not a packaging
 bug.
 
+Prices are USD per million tokens (input, cached input, cache write, output) from
+the model table at https://cursor.com/docs/models. They are Cursor's own list
+prices, not the upstream provider's. A cache write is set only where the table
+lists one. The `-high` variants carry the price of their base model, because
+Cursor does not price by reasoning effort.
+
+Context windows are set only where the table says "Up to 1M" (Opus 4.8, Opus 5,
+Opus 5.5, Sonnet 5, Kimi K3, GPT-5.5, GPT-5.6 Sol, Terra and Luna). Every other
+window is 0, which means unknown: Cursor marks them "Not published", or ties them
+to a plan (Grok 4.7 is 256K on Plus).
+
+Models are hidden when a newer model replaces them in the table (Opus 4.8, Opus 5,
+Sonnet 5, Fable 5, GPT-5.2, GPT-5.3 Codex, GPT-5.5, Grok 4.5), and when Cursor
+marks them "Hidden by default" (Gemini 3.7 Flash, GLM 5.2, Kimi K3).
+
+What the catalog does not model:
+
+- Long-context pricing. GPT-5.5 and the GPT-5.6 models cost 2x input above their
+  standard rate for long context up to 1M tokens, and the page gives no threshold
+  for them. Grok 4.7 costs 2x above 256K input tokens. Fast-mode and Max Mode
+  rates are not listed. The contract has no tier field, so every entry carries
+  the standard rate only.
+- Fast variants of any model, which are separate table rows.
+- The GPT-5.6 Sol promotion. Cursor states its promotional pricing (the $4 input,
+  $5 cache write, $0.4 cached input and $20 output in the catalog) runs through
+  21 November 2026. The page gives no standard price after that date, so the
+  entry must be updated once Cursor publishes it.
+
 ## Development
 
 This module sits outside the parent `go.work`, so local commands need
