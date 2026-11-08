@@ -101,8 +101,8 @@ of the `cmd` setting, so a key passed there is not shown.
 `status` does not see a `CURSOR_API_KEY`: an install that runs on an API key
 alone reports `off`, which fails no check. Cursor profiles are not supported by
 the host accounts store, so only the native account is probed. The probe tests use a fake `sh`
-binary and run on Unix only. The Windows tree kill through `taskkill /T /F` is
-not checked by an automated test.
+binary and run on Unix only. The Windows job runs the deadline test, which
+reaches `taskkill /T /F` without asserting that the tree died.
 
 `Plugin.Limits` is nil: `cursor-agent` exposes no usage limit without a turn
 (`about` gives the plan name, not the quota).
@@ -197,8 +197,9 @@ GOWORK=off scripts/check.sh
 
 On Windows the child tree is stopped with `taskkill /T /F`, a snapshot taken at kill
 time. No Job Object is used, so a grandchild started after that snapshot, or one that
-detaches before it, can outlive the backend. The Windows CI job runs the tests that do
-not need a shell script, so the process-group tests stay on Unix.
+detaches before it, can outlive the backend. The Windows CI job runs a named subset of
+the tests (the `-run` pattern in `.github/workflows/ci.yml`), none of which
+spawns a shell script. The process-group and probe tests stay on Unix.
 
 ## Further reading
 
