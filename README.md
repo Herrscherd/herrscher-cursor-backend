@@ -100,8 +100,8 @@ of the `cmd` setting, so a key passed there is not shown.
 
 `status` does not see a `CURSOR_API_KEY`: an install that runs on an API key
 alone reports `off`, which fails no check. Cursor profiles are not supported by
-the host accounts store, so only the native account is probed. The probe tests use a fake `sh`
-binary and run on Unix only. The Windows job runs the deadline test, which
+the host accounts store, so only the native account is probed. The Windows job does not run the probe
+tests, which use a fake `sh` binary. The Windows job runs the deadline test, which
 reaches `taskkill /T /F` without asserting that the tree died.
 
 `Plugin.Limits` is nil: `cursor-agent` exposes no usage limit without a turn
