@@ -14,8 +14,8 @@ import (
 const (
 	defaultDiscoverCmd = "cursor-agent"
 	authRequiredText   = "authentication required"
-	discoverWaitDelay  = 2 * time.Second
-	discoverOutputMax  = 256 << 10
+	boundedWaitDelay   = 2 * time.Second
+	boundedOutputMax   = 256 << 10
 )
 
 var modelIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -26,7 +26,7 @@ type cappedBuffer struct {
 }
 
 func (b *cappedBuffer) Write(data []byte) (int, error) {
-	accepted := min(len(data), max(discoverOutputMax-b.data.Len(), 0))
+	accepted := min(len(data), max(boundedOutputMax-b.data.Len(), 0))
 	if accepted < len(data) {
 		b.exceeded = true
 	}
@@ -44,25 +44,38 @@ func discover(ctx context.Context, access contracts.DiscoveryAccess) ([]contract
 	if command == "" {
 		command = defaultDiscoverCmd
 	}
-	var stdout, stderr cappedBuffer
-	cmd := turnCommand(ctx, []string{command, "models"}, "", &stderr)
-	cmd.Stdout = &stdout
-	cmd.WaitDelay = discoverWaitDelay
-	runErr := cmd.Run()
-	if isAuthRequired(stdout.data.String()) || isAuthRequired(stderr.data.String()) {
+	output, runErr := runBounded(ctx, []string{command, "models"}, "")
+	if output.mentions(authRequiredText) {
 		return nil, nil
 	}
 	if runErr != nil {
 		return nil, fmt.Errorf("cursor-agent models: %w", runErr)
 	}
-	if stdout.exceeded {
-		return nil, &OutputTooLargeError{Limit: discoverOutputMax}
+	if output.stdout.exceeded {
+		return nil, &OutputTooLargeError{Limit: boundedOutputMax}
 	}
-	return parseModelsOutput(stdout.data.String()), nil
+	return parseModelsOutput(output.stdout.data.String()), nil
 }
 
-func isAuthRequired(output string) bool {
-	return strings.Contains(strings.ToLower(output), authRequiredText)
+type boundedOutput struct {
+	stdout cappedBuffer
+	stderr cappedBuffer
+}
+
+func runBounded(ctx context.Context, argv []string, dir string) (*boundedOutput, error) {
+	output := &boundedOutput{}
+	cmd := turnCommand(ctx, argv, dir, &output.stderr)
+	cmd.Stdout = &output.stdout
+	cmd.WaitDelay = boundedWaitDelay
+	return output, cmd.Run()
+}
+
+func (o *boundedOutput) mentions(lowerText string) bool {
+	return containsFold(o.stdout.data.String(), lowerText) || containsFold(o.stderr.data.String(), lowerText)
+}
+
+func containsFold(output, lowerText string) bool {
+	return strings.Contains(strings.ToLower(output), lowerText)
 }
 
 func parseModelsOutput(output string) []contracts.ModelSpec {
