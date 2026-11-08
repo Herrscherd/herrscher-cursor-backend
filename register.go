@@ -34,6 +34,7 @@ func init() {
 			},
 		},
 		Discover: discover,
+		Probe:    probe,
 		Backend: func(ctx context.Context, cfg contracts.PluginConfig) (contracts.Backend, error) {
 			kind, err := backendKindSetting(cfg)
 			if err != nil {

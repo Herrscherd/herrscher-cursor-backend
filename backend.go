@@ -107,7 +107,10 @@ func (k *BackendKind) UnmarshalText(text []byte) error {
 	return nil
 }
 
-const eventKindTool = "tool"
+const (
+	eventKindTool     = "tool"
+	cursorEventResult = "result"
+)
 
 func resolveBackend(config Config) BackendKind {
 	switch {
@@ -338,7 +341,7 @@ func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent)) (turnRe
 		if event.Subtype == "started" {
 			emitToolCall(event, onEvent)
 		}
-	case "result":
+	case cursorEventResult:
 		return finishTurn(event, onEvent), true
 	}
 	return turnResult{}, false

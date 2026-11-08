@@ -69,6 +69,39 @@ ends when the child exits or when its context is cancelled. Outside Unix
 (`process_other.go`) the group kill is absent and only the direct child is
 killed.
 
+## Health and limits
+
+`Plugin.Probe` checks the login of the native account without a live backend and
+without a turn. It runs `cursor-agent status --format json`, which reads the
+stored tokens and asks Cursor who they belong to (`GetMe`, about half a second).
+The command is the `cmd` setting, else `CURSOR_CMD` from the account
+environment, else `cursor-agent`.
+
+| What `status` says | State | Detail | Remedy |
+|---|---|---|---|
+| authenticated, with an email | `ok` | `health.signed_in_as` (the email) | |
+| authenticated, without an email | `ok` | `health.connected` | |
+| authenticated, but the account lookup failed | `degraded` | `health.unreachable` (`account check failed`) | run `cursor-agent login` |
+| not logged in, or a refresh token missing | `off` | `health.not_logged_in` | run `cursor-agent login` |
+| the binary is not installed | `off` | `health.unreachable` (`command not found`) | |
+| the deadline passed | `degraded` | `health.unreachable` (`timeout`) | |
+| a failing exit, or an output it cannot read | `down` | `health.unreachable` (the exit status, or `unreadable status`) | |
+
+With `Deep`, a logged in account also runs one read-only turn
+(`-p --output-format json --mode ask`, on the `model` setting when set, in the
+`dir` setting), which settles a failed account lookup: a turn refused for
+authentication is `down` with `health.credentials_refused` and the login remedy, a
+rate limit is `degraded` with `health.rate_limited`, any other failure is `down`,
+and an answered turn is `ok`. The remedy names only the binary, never the flags
+of the `cmd` setting, so a key passed there is not shown.
+
+`status` does not see a `CURSOR_API_KEY`: an install that runs on an API key
+alone reports `off`, which fails no check. Cursor profiles are not supported by
+the host accounts store, so only the native account is probed.
+
+`Plugin.Limits` is nil: `cursor-agent` exposes no usage limit without a turn
+(`about` gives the plan name, not the quota).
+
 ## Compaction
 
 The backend does not implement `contracts.Compactor` and does not declare
