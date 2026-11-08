@@ -265,3 +265,19 @@ func TestRegisteredPluginProbesAndReadsNoLimits(t *testing.T) {
 		t.Fatalf("report = %+v, want off", report)
 	}
 }
+
+func TestProbeDeepWithMissingDirIsDown(t *testing.T) {
+	config := probeConfig(fakeCursorFor(t, statusSignedIn, printed(turnSucceeded)))
+	config.Settings["dir"] = filepath.Join(t.TempDir(), "absent")
+	report := runProbe(t, contracts.ProbeAccess{Config: config, Deep: true})
+	if report.State != contracts.HealthDown || textArg(report.Detail, "Reason") != reasonDirMissing {
+		t.Fatalf("report = %+v, want down with %q", report, reasonDirMissing)
+	}
+}
+
+func TestProbeRefusesAProfile(t *testing.T) {
+	report := runProbe(t, contracts.ProbeAccess{Config: probeConfig(fakeCursorFor(t, statusSignedIn, "")), Account: "work"})
+	if report.State != contracts.HealthOff || textArg(report.Detail, "Reason") != reasonProfileUnsupported {
+		t.Fatalf("report = %+v, want off with %q", report, reasonProfileUnsupported)
+	}
+}

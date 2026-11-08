@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"os"
 	"os/exec"
 	"slices"
 	"time"
@@ -26,6 +27,8 @@ const (
 	reasonUnreadableStatus     = "unreadable status"
 	reasonAccountCheckFailed   = "account check failed"
 	reasonTurnFailed           = "turn failed"
+	reasonDirMissing           = "working directory missing"
+	reasonProfileUnsupported   = "profiles not supported"
 )
 
 type loginStatus struct {
@@ -36,6 +39,9 @@ type loginStatus struct {
 }
 
 func probe(ctx context.Context, access contracts.ProbeAccess) contracts.ProbeReport {
+	if access.Account != "" {
+		return unreachableReport(contracts.HealthOff, reasonProfileUnsupported)
+	}
 	base := probeCommand(access)
 	started := time.Now()
 	report, isSignedIn := statusReport(ctx, base)
@@ -115,8 +121,14 @@ func deepReport(ctx context.Context, base []string, config contracts.PluginConfi
 }
 
 func deepFailure(ctx context.Context, base []string, config contracts.PluginConfig) (contracts.ProbeReport, bool) {
+	dir := config.Get("dir")
+	if dir != "" {
+		if _, err := os.Stat(dir); err != nil {
+			return unreachableReport(contracts.HealthDown, reasonDirMissing), true
+		}
+	}
 	argv := append(baseArgv(base, "json", config.Get("model"), ""), "--mode", "ask", deepProbePrompt)
-	output, err := runBounded(ctx, argv, config.Get("dir"))
+	output, err := runBounded(ctx, argv, dir)
 	if err == nil && isAnsweredTurn(output) {
 		return contracts.ProbeReport{}, false
 	}

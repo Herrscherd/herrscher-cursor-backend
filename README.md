@@ -66,8 +66,8 @@ second to finish; after that the read is cut short and the turn ends without
 error. This package does not kill such an escaped process. Because the child is
 in its own process group, a terminal Ctrl-C does not stop the child; the turn
 ends when the child exits or when its context is cancelled. Outside Unix
-(`process_other.go`) the group kill is absent and only the direct child is
-killed.
+(`process_other.go`) there is no process group: the child and its descendants
+are killed as a tree with `taskkill /T /F`.
 
 ## Health and limits
 
@@ -86,18 +86,22 @@ environment, else `cursor-agent`.
 | the binary is not installed | `off` | `health.unreachable` (`command not found`) | |
 | the deadline passed | `degraded` | `health.unreachable` (`timeout`) | |
 | a failing exit, or an output it cannot read | `down` | `health.unreachable` (the exit status, or `unreadable status`) | |
+| a named profile is asked for | `off` | `health.unreachable` (`profiles not supported`) | |
 
 With `Deep`, a logged in account also runs one read-only turn
 (`-p --output-format json --mode ask`, on the `model` setting when set, in the
 `dir` setting), which settles a failed account lookup: a turn refused for
 authentication is `down` with `health.credentials_refused` and the login remedy, a
-rate limit is `degraded` with `health.rate_limited`, any other failure is `down`,
-and an answered turn is `ok`. The remedy names only the binary, never the flags
+rate limit is `degraded` with `health.rate_limited`, a `dir` setting that does not exist is
+`down` (`working directory missing`), any other failure is `down`, and an
+answered turn is `ok`. The remedy names only the binary, never the flags
 of the `cmd` setting, so a key passed there is not shown.
 
 `status` does not see a `CURSOR_API_KEY`: an install that runs on an API key
 alone reports `off`, which fails no check. Cursor profiles are not supported by
-the host accounts store, so only the native account is probed.
+the host accounts store, so only the native account is probed. The probe tests use a fake `sh`
+binary and run on Unix only; the Windows tree kill is covered by the discover
+tests of the `windows` job.
 
 `Plugin.Limits` is nil: `cursor-agent` exposes no usage limit without a turn
 (`about` gives the plan name, not the quota).
