@@ -67,7 +67,8 @@ error. This package does not kill such an escaped process. Because the child is
 in its own process group, a terminal Ctrl-C does not stop the child; the turn
 ends when the child exits or when its context is cancelled. Outside Unix
 (`process_other.go`) there is no process group: the child and its descendants
-are killed as a tree with `taskkill /T /F`.
+are killed as a tree with `taskkill /T /F`; when `taskkill` fails, only the
+direct child is killed.
 
 ## Health and limits
 
@@ -100,8 +101,8 @@ of the `cmd` setting, so a key passed there is not shown.
 `status` does not see a `CURSOR_API_KEY`: an install that runs on an API key
 alone reports `off`, which fails no check. Cursor profiles are not supported by
 the host accounts store, so only the native account is probed. The probe tests use a fake `sh`
-binary and run on Unix only; the Windows tree kill is covered by the discover
-tests of the `windows` job.
+binary and run on Unix only. The Windows tree kill through `taskkill /T /F` is
+not checked by an automated test.
 
 `Plugin.Limits` is nil: `cursor-agent` exposes no usage limit without a turn
 (`about` gives the plan name, not the quota).
