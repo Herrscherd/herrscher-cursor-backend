@@ -288,7 +288,7 @@ type turnTexts struct {
 	emitted bool
 }
 
-func (t *turnTexts) detail(text string) string {
+func (t *turnTexts) nextTextDetail(text string) string {
 	if !t.emitted {
 		t.emitted = true
 		return text
@@ -365,7 +365,7 @@ func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent), texts *
 func emitAssistantText(event cursorEvent, onEvent func(contracts.BackendEvent), texts *turnTexts) {
 	for _, block := range event.Message.Content {
 		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
-			emit(onEvent, contracts.BackendEvent{Kind: "text", Detail: texts.detail(block.Text)})
+			emit(onEvent, contracts.BackendEvent{Kind: "text", Detail: texts.nextTextDetail(block.Text)})
 		}
 	}
 }
