@@ -54,6 +54,12 @@ func TestFirstTextBlockOfATurnHasNoSeparator(t *testing.T) {
 	assertTextDetails(t, texts, []string{"Voici le fichier."})
 }
 
+func TestThinkingAndToolUseBlocksDoNotCountAsEmittedText(t *testing.T) {
+	reasoningAndToolUse := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"Je réfléchis."},{"type":"tool_use","name":"Read","input":{"path":"README.md"}}]},"session_id":"s"}`
+	texts, _ := readTurnTexts(t, reasoningAndToolUse, assistantTextLine("Voici le fichier."))
+	assertTextDetails(t, texts, []string{"Voici le fichier."})
+}
+
 func TestBlankTextBlockDoesNotCountAsEmittedText(t *testing.T) {
 	texts, _ := readTurnTexts(t, assistantTextLine(" \n "), assistantTextLine("Je regarde."), assistantTextLine(" \n "), assistantTextLine("Voici."))
 	assertTextDetails(t, texts, []string{"Je regarde.", "\n\nVoici."})
