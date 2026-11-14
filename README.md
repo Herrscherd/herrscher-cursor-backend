@@ -32,9 +32,14 @@ does not set it.
 
 ## Two modes
 
-`stream`, the default, uses `--output-format stream-json` and maps assistant text
-blocks, `tool_call` starts and the terminal `result` event onto
-`contracts.BackendEvent`.
+`stream`, the default, uses `--output-format stream-json` and maps assistant
+text blocks, `tool_call` starts and the terminal `result` event onto
+`contracts.BackendEvent`. Each assistant text block after the first non-blank
+text block of a turn carries a leading blank line (`\n\n`), so consumers that
+concatenate text events keep the blocks apart. Unlike the claude backend, which
+trims each block's text, this backend emits the text as it arrives: a block that
+ends with a newline, followed by another block, gives three line breaks at the
+join.
 
 Unlike a persistent-process backend, `cursor-agent` exits after every headless
 turn, so continuity comes from the session id in the `result` event. It is stored

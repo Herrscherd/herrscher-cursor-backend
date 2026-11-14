@@ -433,7 +433,7 @@ func FuzzConsumeLine(f *testing.F) {
 		f.Add([]byte(line))
 	}
 	f.Fuzz(func(t *testing.T, line []byte) {
-		outcome := consumeLine(line, func(contracts.BackendEvent) {})
+		outcome := consumeLine(line, func(contracts.BackendEvent) {}, &turnTexts{})
 		if !outcome.isDone && outcome.turn != (turnResult{}) {
 			t.Fatalf("line %q yields a turn without ending the turn: %+v", line, outcome.turn)
 		}

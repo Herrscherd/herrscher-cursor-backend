@@ -282,15 +282,30 @@ func (e *StreamEndedError) Unwrap() error {
 	return e.Cause
 }
 
+const textBlockSeparator = "\n\n"
+
+type turnTexts struct {
+	emitted bool
+}
+
+func (t *turnTexts) nextTextDetail(text string) string {
+	if !t.emitted {
+		t.emitted = true
+		return text
+	}
+	return textBlockSeparator + text
+}
+
 func readTurn(reader *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult, error) {
 	var skipped int
+	var texts turnTexts
 	for {
 		line, err := readLine(reader)
 		if _, isTooLong := errors.AsType[*LineTooLongError](err); isTooLong {
 			return turnResult{}, err
 		}
 		if len(line) > 0 {
-			outcome := consumeLine(line, onEvent)
+			outcome := consumeLine(line, onEvent, &texts)
 			if outcome.isDone {
 				return outcome.turn, nil
 			}
@@ -324,19 +339,19 @@ type lineOutcome struct {
 	isUnparsable bool
 }
 
-func consumeLine(line []byte, onEvent func(contracts.BackendEvent)) lineOutcome {
+func consumeLine(line []byte, onEvent func(contracts.BackendEvent), texts *turnTexts) lineOutcome {
 	var event cursorEvent
 	if json.Unmarshal(line, &event) != nil {
 		return lineOutcome{isUnparsable: len(bytes.TrimSpace(line)) != 0}
 	}
-	turn, isDone := applyEvent(event, onEvent)
+	turn, isDone := applyEvent(event, onEvent, texts)
 	return lineOutcome{turn: turn, isDone: isDone}
 }
 
-func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent)) (turnResult, bool) {
+func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent), texts *turnTexts) (turnResult, bool) {
 	switch event.Type {
 	case "assistant":
-		emitAssistantText(event, onEvent)
+		emitAssistantText(event, onEvent, texts)
 	case "tool_call":
 		if event.Subtype == "started" {
 			emitToolCall(event, onEvent)
@@ -347,10 +362,10 @@ func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent)) (turnRe
 	return turnResult{}, false
 }
 
-func emitAssistantText(event cursorEvent, onEvent func(contracts.BackendEvent)) {
+func emitAssistantText(event cursorEvent, onEvent func(contracts.BackendEvent), texts *turnTexts) {
 	for _, block := range event.Message.Content {
 		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
-			emit(onEvent, contracts.BackendEvent{Kind: "text", Detail: block.Text})
+			emit(onEvent, contracts.BackendEvent{Kind: "text", Detail: texts.nextTextDetail(block.Text)})
 		}
 	}
 }
