@@ -34,7 +34,9 @@ does not set it.
 
 `stream`, the default, uses `--output-format stream-json` and maps assistant text
 blocks, `tool_call` starts and the terminal `result` event onto
-`contracts.BackendEvent`.
+`contracts.BackendEvent`. Each assistant text block after the first of a turn
+carries a leading blank line (`\n\n`), so consumers that concatenate text events
+keep the blocks apart.
 
 Unlike a persistent-process backend, `cursor-agent` exits after every headless
 turn, so continuity comes from the session id in the `result` event. It is stored
