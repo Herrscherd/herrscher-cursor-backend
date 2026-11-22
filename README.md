@@ -65,24 +65,25 @@ set holds the calls that started and have not finished, up to 256. The seen set
 holds every ID a start has presented, up to 4096. An ID enters the seen set as
 soon as its start arrives, whether that start opens a call, is refused by the
 open bound, or names no tool. A `started` line opens a call only when its ID is
-not seen yet, the open set is under 256 and the seen set is under 4096.
-Otherwise it leaves as a plain `tool` event with no `ToolCall`, and the open set
-is left alone. A start refused by the open bound is still recorded as seen, so
-it stays a plain `tool` event for the rest of the turn, even after a place frees
-up. A start past the seen bound is not recorded at all, and its finish emits
-nothing. The first start refused by each bound in a turn logs one `slog.Warn`
-per bound and per turn, with the attributes `bound` (`max_open` or `max_seen`)
-and `limit`. A finish emits only for an ID in the open set: it frees that
-place, and the ID stays seen. A repeated or unknown finish emits nothing. A call still open
-when the turn ends, whether on its result, on an error or on an interruption,
-stays `started` with no `tool_done`: the sets belong to one turn and are dropped
-with it. A `tool` line with no `call_id` keeps only the legacy `Tool` and
-`Detail` fields, with no `ToolCall`. Each assistant text block
-after the first non-blank text block of a turn carries a leading blank line
-(`\n\n`), so consumers that concatenate text events keep the blocks apart.
-Unlike the claude backend, which trims each block's text, this backend emits the
-text as it arrives: a block that ends with a newline, followed by another block,
-gives three line breaks at the join.
+at most 256 bytes long, not seen yet, the open set is under 256 and the seen set
+is under 4096. An ID over 256 bytes is never recorded, so its start stays bare
+and its finish emits nothing. Otherwise the start leaves as a plain `tool` event
+with no `ToolCall`, and the open set is left alone. A start refused by the open
+bound is still recorded as seen, so it stays a plain `tool` event for the rest
+of the turn, even after a place frees up. A start past the seen bound is not
+recorded at all, and its finish emits nothing. The first start refused by each
+bound in a turn logs one `slog.Warn` per bound and per turn, with the attributes
+`bound` (`max_open` or `max_seen`) and `limit`. A finish emits only for an ID in
+the open set: it frees that place, and the ID stays seen. A repeated or unknown
+finish emits nothing. A call still open when the turn ends, whether on its
+result, on an error or on an interruption, stays `started` with no `tool_done`:
+the sets belong to one turn and are dropped with it. A `tool` line with no
+`call_id` keeps only the legacy `Tool` and `Detail` fields, with no `ToolCall`.
+Each assistant text block after the first non-blank text block of a turn carries
+a leading blank line (`\n\n`), so consumers that concatenate text events keep
+the blocks apart. Unlike the claude backend, which trims each block's text, this
+backend emits the text as it arrives: a block that ends with a newline, followed
+by another block, gives three line breaks at the join.
 
 Unlike a persistent-process backend, `cursor-agent` exits after every headless
 turn, so continuity comes from the session id in the `result` event. It is stored

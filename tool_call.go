@@ -12,6 +12,7 @@ import (
 const (
 	maxOpenToolCalls           = 256
 	maxSeenToolCalls           = 4096
+	maxCallIDBytes             = 256
 	maxToolErrorRunes          = 200
 	toolResultSuccess          = "success"
 	toolResultFailure          = "failure"
@@ -38,6 +39,9 @@ type boundReport struct {
 }
 
 func (t *toolCallTracker) begin(callID, tool string) bool {
+	if len(callID) > maxCallIDBytes {
+		return false
+	}
 	if _, known := t.seen[callID]; known {
 		return false
 	}

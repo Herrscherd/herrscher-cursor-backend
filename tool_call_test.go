@@ -502,3 +502,23 @@ func TestNoBoundWarningWhileNoStartIsRefused(t *testing.T) {
 		t.Fatalf("log = %q, want none while every start is accepted", logged)
 	}
 }
+
+func TestCallIDBeyondTheByteBoundNeverOpensACall(t *testing.T) {
+	id := strings.Repeat("é", maxCallIDBytes/2) + "x"
+	tools := toolEvents(readTurnEvents(t, withCallID(readStartedLine, id), withCallID(readSucceededLine, id)))
+	if len(tools) != 1 || tools[0].Kind != contracts.BackendKindTool || tools[0].Tool != "readToolCall" || tools[0].ToolCall != nil {
+		t.Fatalf("tool events = %+v, want the start alone as a bare tool event", tools)
+	}
+}
+
+func TestCallIDAtTheByteBoundOpensACall(t *testing.T) {
+	id := strings.Repeat("é", maxCallIDBytes/2)
+	tools := toolEvents(readTurnEvents(t, withCallID(readStartedLine, id), withCallID(readSucceededLine, id)))
+	if len(tools) != 2 || tools[0].ToolCall == nil || tools[0].ToolCall.State != contracts.ToolCallStarted {
+		t.Fatalf("tool events = %+v, want a started call for an id of %d bytes", tools, maxCallIDBytes)
+	}
+	want := contracts.ToolCall{ID: id, Tool: "readToolCall", State: contracts.ToolCallSucceeded}
+	if tools[1].Kind != contracts.BackendKindToolDone || tools[1].ToolCall == nil || *tools[1].ToolCall != want {
+		t.Fatalf("done = %+v, want %+v", tools[1], want)
+	}
+}
