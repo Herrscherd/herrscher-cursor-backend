@@ -42,16 +42,21 @@ onto `contracts.BackendEvent`. A call's start is a `tool` event whose `ToolCall`
 is in the `started` state, under the `call_id` of the line. Its end is a
 `tool_done` event in the `succeeded` state, or in the `failed` state with an
 `Error` of at most 200 runes. For a `shellToolCall` the error reads `exit code
-N`, followed by the first line of stderr in parentheses when there is one; a
+N`, followed by the first non-blank line of stderr in parentheses when there is
+one. When `aborted` is true the error reads `aborted`, followed by `, exit code
+N` when `exitCode` is present, then the first non-blank line of stderr in
+parentheses the same way (`aborted (line)` without an exit code). Otherwise a
 timeout reads `timeout after Nms`, a rejection `rejected: <reason>`, a spawn
 failure `spawn error: <error>` and a denial `permission denied: <error>`. A
 rejection, a spawn failure or a denial with no text reads as the name of its
 result, as a timeout or a failure without its number does. Any other failure
-takes the first of `message`, `error`, `stderr` or `reason` whose first line is
-not blank, each read on its own, so a field of the wrong JSON type or a blank
-one is skipped and the others still count. A bare string result is taken by its
-first line, and without any of them the error is the name of the result. A `shellToolCall`
-reads `exitCode` and `timeoutMs` only as whole numbers in the int32 range, and
+takes the first of `message`, `error`, `stderr` or `reason` that has a non-blank
+line, each read on its own, so a field of the wrong JSON type or a blank one is
+skipped and the others still count. A bare string result is read the same way,
+and without any of them the error is the name of the result. In every case the
+error is the first non-blank line of the text: leading blank lines are skipped,
+and the rest of the text is dropped. A `shellToolCall` reads `exitCode` and
+`timeoutMs` only as whole numbers in the int32 range, and
 `timeoutMs` only when it is not negative. A string, a fraction, an exponent,
 `-0`, a value out of range or a missing value falls back to the name of the
 result, and the value itself is never quoted.
@@ -60,8 +65,17 @@ A call with no tool name, or with a tool name longer than 256 bytes, never
 opens: its start is a bare `tool` event, its end emits nothing, and its
 `call_id` still counts as seen, so a later start with the same id stays bare.
 
-`Error` is therefore the first line of stderr or of a message, and it can carry
-a secret, as `Detail` can. The contract requires every exporter on the host side
+A result with more than one outcome key is malformed: its end emits no
+`tool_done`, the open place it held is freed, its `call_id` stays seen, and the
+turn logs one warning, without the value, however many such results it carries.
+
+There is no reset: the seen set lives for one turn. The contract's reset, which
+opens a new run in which a call id may come back, is not implemented, because no
+reset has been observed from cursor-agent. A call id that returns in a later
+turn is therefore a new call.
+
+`Error` is therefore the first non-blank line of stderr or of a message, and it
+can carry a secret, as `Detail` can. The contract requires every exporter on the host side
 to send `Error`, like `Detail`, only when the operator opts in.
 
 A finished line whose start the turn never saw emits nothing. A finished line
