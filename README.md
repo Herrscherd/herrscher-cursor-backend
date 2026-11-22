@@ -57,7 +57,8 @@ under the `call_id` of the line. Any other start is a plain `tool` event with no
 `ToolCall`. Its ID still enters the seen set when it is at most 256 bytes long
 and the seen set is under 4096, so a start refused for its tool key (none, two
 or more, an empty name or one over 256 bytes) or by the open bound keeps that ID
-bare for the rest of the turn, even after a place frees up. An ID over 256 bytes, or one past the seen bound, is never recorded.
+bare for the rest of the turn, even after a place frees up. An ID over 256
+bytes, or one past the seen bound, is never recorded.
 The first start refused by each bound in a turn logs one `slog.Warn` per bound
 and per turn, with the attributes `bound` (`max_open` or `max_seen`) and
 `limit`.
