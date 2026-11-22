@@ -66,9 +66,10 @@ A call with no tool name, or with a tool name longer than 256 bytes, never
 opens: its start is a bare `tool` event, its end emits nothing, and its
 `call_id` still counts as seen, so a later start with the same id stays bare.
 
-A result with more than one outcome key is malformed: its end emits no
-`tool_done`, the open place it held is freed, its `call_id` stays seen, and the
-turn logs one warning, without the value, however many such results it carries.
+A result with more than one outcome key, or an end whose tool key is not the
+one of its start, is malformed: its end emits no `tool_done`, the open place it
+held is freed, its `call_id` stays seen, and the turn logs one warning, without
+the value, however many such results it carries.
 
 There is no reset: the seen set lives for one turn. The contract's reset, which
 opens a new run in which a call id may come back, is not implemented, because no

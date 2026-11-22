@@ -29,7 +29,7 @@ const (
 var wholeNumber = regexp.MustCompile(`^(0|-?[1-9]\d*)$`)
 
 type toolCallTracker struct {
-	open              map[string]string
+	open              map[string]openCall
 	seen              map[string]struct{}
 	openBound         boundReport
 	seenBound         boundReport
@@ -37,8 +37,8 @@ type toolCallTracker struct {
 }
 
 func (t *toolCallTracker) warnMalformedOnce() {
-	if t.malformedReported.first() {
-		slog.Warn("tool call result carries more than one outcome, the call stays started")
+	if t.malformedReported.claim() {
+		slog.Warn("tool call result carries more than one outcome or another tool than its start, the call stays started")
 	}
 }
 
@@ -46,7 +46,7 @@ type onceWarning struct {
 	reported bool
 }
 
-func (w *onceWarning) first() bool {
+func (w *onceWarning) claim() bool {
 	if w.reported {
 		return false
 	}
@@ -60,7 +60,12 @@ type boundReport struct {
 	reported onceWarning
 }
 
-func (t *toolCallTracker) begin(callID, tool string) bool {
+type openCall struct {
+	tool string
+	key  string
+}
+
+func (t *toolCallTracker) begin(callID, tool, key string) bool {
 	if len(callID) > maxCallIDBytes {
 		return false
 	}
@@ -73,7 +78,7 @@ func (t *toolCallTracker) begin(callID, tool string) bool {
 	}
 	if t.seen == nil {
 		t.seen = make(map[string]struct{})
-		t.open = make(map[string]string)
+		t.open = make(map[string]openCall)
 		t.openBound = boundReport{name: "max_open", limit: maxOpenToolCalls}
 		t.seenBound = boundReport{name: "max_seen", limit: maxSeenToolCalls}
 	}
@@ -85,20 +90,20 @@ func (t *toolCallTracker) begin(callID, tool string) bool {
 		t.openBound.warnOnce()
 		return false
 	}
-	t.open[callID] = tool
+	t.open[callID] = openCall{tool: tool, key: key}
 	return true
 }
 
 func (b *boundReport) warnOnce() {
-	if b.reported.first() {
+	if b.reported.claim() {
 		slog.Warn("tool calls reach a bound of the turn, later starts carry no lifecycle", "bound", b.name, "limit", b.limit)
 	}
 }
 
-func (t *toolCallTracker) finish(callID string) (string, bool) {
-	tool, open := t.open[callID]
+func (t *toolCallTracker) finish(callID string) (openCall, bool) {
+	call, open := t.open[callID]
 	delete(t.open, callID)
-	return tool, open
+	return call, open
 }
 
 type toolEntry struct {
@@ -129,10 +134,13 @@ const (
 	resultRead
 )
 
-func toolCallResult(call map[string]json.RawMessage) (toolResult, resultReading) {
+func toolCallResult(call map[string]json.RawMessage, startKey string) (toolResult, resultReading) {
 	entry, ok := singleTool(call)
 	if !ok {
 		return toolResult{}, resultAbsent
+	}
+	if entry.name != startKey {
+		return toolResult{}, resultMalformed
 	}
 	var parsed struct {
 		Result map[string]json.RawMessage `json:"result"`
@@ -299,4 +307,9 @@ func boundRunes(text string) string {
 		runes = runes[:maxToolErrorRunes]
 	}
 	return string(runes)
+}
+
+func toolKey(call map[string]json.RawMessage) string {
+	entry, _ := singleTool(call)
+	return entry.name
 }
