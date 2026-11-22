@@ -137,10 +137,27 @@ func TestEndAfterAStartOfTwoToolsEmitsNothing(t *testing.T) {
 	}
 }
 
-func TestEndWithAnEmptyOutcomeEmitsNoToolDone(t *testing.T) {
-	events := toolEvents(readTurnEvents(t, readStartedLine, completedLine(readCallWithResult(`{"":{"message":"boom"}}`))))
-	if len(events) != 1 || events[0].ToolCall == nil || events[0].ToolCall.State != contracts.ToolCallStarted {
-		t.Fatalf("tool events = %+v, want the started call alone, with no tool_done", events)
+func TestEndWithABlankOutcomeEmitsNoToolDoneAndNoWarning(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+	}{
+		{name: "empty", result: `{"":{"message":"boom"}}`},
+		{name: "space", result: `{" ":{}}`},
+		{name: "newline", result: `{"\n":""}`},
+		{name: "tab", result: `{"\t":{"message":"  "}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logged := captureLog(t)
+			events := toolEvents(readTurnEvents(t, readStartedLine, completedLine(readCallWithResult(tc.result))))
+			if len(events) != 1 || events[0].ToolCall == nil || events[0].ToolCall.State != contracts.ToolCallStarted {
+				t.Fatalf("tool events = %+v, want the started call alone, with no tool_done", events)
+			}
+			if got := nonEmptyLines(logged.String()); len(got) != 0 {
+				t.Fatalf("log = %q, want no warning for a blank outcome", got)
+			}
+		})
 	}
 }
 

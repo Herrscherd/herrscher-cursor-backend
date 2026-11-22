@@ -212,9 +212,13 @@ func TestEndWithoutReadableResultEmitsNothing(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			logged := captureLog(t)
 			events := toolEvents(readTurnEvents(t, readStartedLine, tc.end))
 			if len(events) != 1 || events[0].ToolCall == nil || events[0].ToolCall.State != contracts.ToolCallStarted {
 				t.Fatalf("tool events = %+v, want the start alone, still started", events)
+			}
+			if got := nonEmptyLines(logged.String()); len(got) != 0 {
+				t.Fatalf("log = %q, want no warning for an absent result", got)
 			}
 		})
 	}
