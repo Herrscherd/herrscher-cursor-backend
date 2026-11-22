@@ -41,26 +41,27 @@ text blocks, `tool_call` starts and finishes, and the terminal `result` event
 onto `contracts.BackendEvent`. A call's start is a `tool` event whose `ToolCall`
 is in the `started` state, under the `call_id` of the line. Its end is a
 `tool_done` event in the `succeeded` state, or in the `failed` state with an
-`Error` of at most 200 runes. For a `shellToolCall` the error reads `exit code
-N`, followed by the first non-blank line of stderr in parentheses when there is
-one. When `aborted` is true the error reads `aborted`, followed by `, exit code
-N` when `exitCode` is a whole number in the int32 range, then the first
-non-blank line of stderr in parentheses the same way (`aborted (line)` without
-an exit code). Otherwise a
-timeout reads `timeout after Nms`, a rejection `rejected: <reason>`, a spawn
-failure `spawn error: <error>` and a denial `permission denied: <error>`. A
-rejection, a spawn failure or a denial with no text reads as the name of its
-result, as a timeout or a failure without its number does. Any other failure
-takes the first of `message`, `error`, `stderr` or `reason` that has a non-blank
-line, each read on its own, so a field of the wrong JSON type or a blank one is
+`Error` of at most 200 runes. For a `shellToolCall`, a `failure` result reads
+`exit code N`, followed by the first non-blank line of stderr in parentheses
+when there is one. When that `failure` carries `aborted: true`, the error reads
+`aborted`, followed by `, exit code N` when `exitCode` is a whole number in the
+int32 range, then the first non-blank line of stderr in parentheses the same way
+(`aborted (line)` without an exit code). The other results of a `shellToolCall`
+ignore `aborted`: a timeout reads `timeout after Nms`, a rejection
+`rejected: <reason>`, a spawn failure `spawn error: <error>` and a denial
+`permission denied: <error>`. A rejection, a spawn failure or a denial with no
+text reads as the name of its result. A failure of any other tool takes the
+first of `message`, `error`, `stderr` or `reason` that has a non-blank line,
+each read on its own, so a field of the wrong JSON type or a blank one is
 skipped and the others still count. A bare string result is read the same way,
 and without any of them the error is the name of the result. In every case the
 error is the first non-blank line of the text: leading blank lines are skipped,
 and the rest of the text is dropped. A `shellToolCall` reads `exitCode` and
-`timeoutMs` only as whole numbers in the int32 range, and
-`timeoutMs` only when it is not negative. A string, a fraction, an exponent,
-`-0`, a value out of range or a missing value falls back to the name of the
-result, and the value itself is never quoted.
+`timeoutMs` only as whole numbers in the int32 range, and `timeoutMs` only when
+it is not negative. A string, a fraction, an exponent, `-0`, a value out of
+range or a missing value is never quoted. On a timeout, or on a `failure`
+without `aborted: true`, the error falls back to the name of the result. Under
+`aborted: true` the exit code is left out and the error still reads `aborted`.
 
 A call with no tool name, or with a tool name longer than 256 bytes, never
 opens: its start is a bare `tool` event, its end emits nothing, and its
@@ -76,9 +77,9 @@ opens a new run in which a call id may come back, is not implemented, because no
 reset has been observed from cursor-agent. A call id that returns in a later
 turn is therefore a new call.
 
-`Error` is therefore the first non-blank line of stderr or of a message, and it
-can carry a secret, as `Detail` can. The contract requires every exporter on the host side
-to send `Error`, like `Detail`, only when the operator opts in.
+Since `Error` is the first non-blank line of stderr or of a message, it can
+carry a secret, as `Detail` can. The contract requires every exporter on the
+host side to send `Error`, like `Detail`, only when the operator opts in.
 
 A finished line whose start the turn never saw emits nothing. A finished line
 whose result is absent or unreadable emits nothing either: its call stays
@@ -99,18 +100,18 @@ recorded at all, and its finish emits nothing. The first start refused by each
 bound in a turn logs one `slog.Warn` per bound and per turn, with the attributes
 `bound` (`max_open` or `max_seen`) and `limit`. A finish emits only for an ID in
 the open set: it frees that place, and the ID stays seen. A repeated or unknown
-finish emits nothing. A call still open when the turn ends, whether on its
-result, on an error or on an interruption, stays `started` with no `tool_done`:
-the sets belong to one turn and are dropped with it. A `tool` line with no
-`call_id` keeps only the legacy `Tool` and `Detail` fields, with no `ToolCall`,
-when its `tool_call` holds a single tool key. With no key, or with two keys or
-more, it carries neither `Tool` nor `Detail`, where earlier releases named one
-of several keys picked at random.
-Each assistant text block after the first non-blank text block of a turn carries
-a leading blank line (`\n\n`), so consumers that concatenate text events keep
-the blocks apart. Unlike the claude backend, which trims each block's text, this
-backend emits the text as it arrives: a block that ends with a newline, followed
-by another block, gives three line breaks at the join.
+finish emits nothing. A call still open when the turn ends, whether on the
+turn's `result` event, on an error or on an interruption, stays `started` with
+no `tool_done`: the sets belong to one turn and are dropped with it. A `tool`
+line with no `call_id` keeps only the legacy `Tool` and `Detail` fields, with no
+`ToolCall`, when its `tool_call` holds a single tool key. With no key, or with
+two keys or more, it carries neither `Tool` nor `Detail`, where earlier releases
+named one of several keys picked at random. Each assistant text block after the
+first non-blank text block of a turn carries a leading blank line (`\n\n`), so
+consumers that concatenate text events keep the blocks apart. Unlike the claude
+backend, which trims each block's text, this backend emits the text as it
+arrives: a block that ends with a newline, followed by another block, gives
+three line breaks at the join.
 
 Unlike a persistent-process backend, `cursor-agent` exits after every headless
 turn, so continuity comes from the session id in the `result` event. It is stored
