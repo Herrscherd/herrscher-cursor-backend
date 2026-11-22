@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"encoding/json"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -24,12 +25,18 @@ const (
 var wholeNumber = regexp.MustCompile(`^-?(0|[1-9]\d*)$`)
 
 type toolCallTracker struct {
-	open map[string]string
-	seen map[string]struct{}
+	open              map[string]string
+	seen              map[string]struct{}
+	openBoundReported bool
+	seenBoundReported bool
 }
 
 func (t *toolCallTracker) begin(callID, tool string) bool {
-	if _, known := t.seen[callID]; known || len(t.seen) >= maxSeenToolCalls {
+	if _, known := t.seen[callID]; known {
+		return false
+	}
+	if len(t.seen) >= maxSeenToolCalls {
+		t.reportSeenBound()
 		return false
 	}
 	if t.seen == nil {
@@ -37,11 +44,31 @@ func (t *toolCallTracker) begin(callID, tool string) bool {
 		t.open = make(map[string]string)
 	}
 	t.seen[callID] = struct{}{}
-	if tool == "" || len(t.open) >= maxOpenToolCalls {
+	if tool == "" {
+		return false
+	}
+	if len(t.open) >= maxOpenToolCalls {
+		t.reportOpenBound()
 		return false
 	}
 	t.open[callID] = tool
 	return true
+}
+
+func (t *toolCallTracker) reportOpenBound() {
+	if t.openBoundReported {
+		return
+	}
+	t.openBoundReported = true
+	slog.Warn("tool calls reach the open bound of the turn, later starts carry no lifecycle", "max_open", maxOpenToolCalls)
+}
+
+func (t *toolCallTracker) reportSeenBound() {
+	if t.seenBoundReported {
+		return
+	}
+	t.seenBoundReported = true
+	slog.Warn("tool calls reach the seen bound of the turn, later starts carry no lifecycle", "max_seen", maxSeenToolCalls)
 }
 
 func (t *toolCallTracker) finish(callID string) (string, bool) {

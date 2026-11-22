@@ -70,8 +70,9 @@ Otherwise it leaves as a plain `tool` event with no `ToolCall`, and the open set
 is left alone. A start refused by the open bound is still recorded as seen, so
 it stays a plain `tool` event for the rest of the turn, even after a place frees
 up. A start past the seen bound is not recorded at all, and its finish emits
-nothing. A finish emits only for an ID in the open set: it frees that place, and
-the ID stays seen. A repeated or unknown finish emits nothing. A call still open
+nothing. The first start refused by each bound in a turn logs a warning that
+names the bound. A finish emits only for an ID in the open set: it frees that
+place, and the ID stays seen. A repeated or unknown finish emits nothing. A call still open
 when the turn ends, whether on its result, on an error or on an interruption,
 stays `started` with no `tool_done`: the sets belong to one turn and are dropped
 with it. A `tool` line with no `call_id` keeps only the legacy `Tool` and
