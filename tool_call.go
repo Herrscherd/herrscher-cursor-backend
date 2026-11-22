@@ -37,19 +37,21 @@ type toolCallTracker struct {
 }
 
 func (t *toolCallTracker) warnMalformedOnce() {
-	t.malformedReported.warn("tool call result carries more than one outcome, the call stays started")
+	if t.malformedReported.first() {
+		slog.Warn("tool call result carries more than one outcome, the call stays started")
+	}
 }
 
 type onceWarning struct {
 	reported bool
 }
 
-func (w *onceWarning) warn(message string, attrs ...any) {
+func (w *onceWarning) first() bool {
 	if w.reported {
-		return
+		return false
 	}
 	w.reported = true
-	slog.Warn(message, attrs...)
+	return true
 }
 
 type boundReport struct {
@@ -88,7 +90,9 @@ func (t *toolCallTracker) begin(callID, tool string) bool {
 }
 
 func (b *boundReport) warnOnce() {
-	b.reported.warn("tool calls reach a bound of the turn, later starts carry no lifecycle", "bound", b.name, "limit", b.limit)
+	if b.reported.first() {
+		slog.Warn("tool calls reach a bound of the turn, later starts carry no lifecycle", "bound", b.name, "limit", b.limit)
+	}
 }
 
 func (t *toolCallTracker) finish(callID string) (string, bool) {
