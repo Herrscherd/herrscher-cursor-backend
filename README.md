@@ -70,8 +70,9 @@ set. It frees that place, the ID stays seen, and a repeated or unknown finish
 emits nothing. Its result then decides what it emits:
 
 - an absent or unreadable result emits no `tool_done`, and the call stays
-  `started`; a result whose outcome key is empty or blank, and an end whose
-  `tool_call` holds no tool key or several, count as absent and log no warning;
+  `started`; a result whose outcome key is empty, blank, spans more than one
+  line or has blank space around it, and an end whose `tool_call` holds no tool
+  key or several, count as absent and log no warning;
 - a result with more than one outcome key, or an end whose tool key is not the
   one of its start, is malformed: it emits no `tool_done`, the call stays
   `started`, and the turn logs one warning, without the value, however many

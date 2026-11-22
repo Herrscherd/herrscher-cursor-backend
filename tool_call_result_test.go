@@ -137,7 +137,7 @@ func TestEndAfterAStartOfTwoToolsEmitsNothing(t *testing.T) {
 	}
 }
 
-func TestEndWithABlankOutcomeEmitsNoToolDoneAndNoWarning(t *testing.T) {
+func TestEndWithAnUntrimmedOutcomeEmitsNoToolDoneAndNoWarning(t *testing.T) {
 	cases := []struct {
 		name   string
 		result string
@@ -146,6 +146,10 @@ func TestEndWithABlankOutcomeEmitsNoToolDoneAndNoWarning(t *testing.T) {
 		{name: "space", result: `{" ":{}}`},
 		{name: "newline", result: `{"\n":""}`},
 		{name: "tab", result: `{"\t":{"message":"  "}}`},
+		{name: "leading newline", result: `{"\nsuccess":{}}`},
+		{name: "trailing newline", result: `{"success\n":{}}`},
+		{name: "leading space", result: `{" failure":{"message":"boom"}}`},
+		{name: "two lines", result: `{"failure\nmore":{}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,7 +159,7 @@ func TestEndWithABlankOutcomeEmitsNoToolDoneAndNoWarning(t *testing.T) {
 				t.Fatalf("tool events = %+v, want the started call alone, with no tool_done", events)
 			}
 			if got := nonEmptyLines(logged.String()); len(got) != 0 {
-				t.Fatalf("log = %q, want no warning for a blank outcome", got)
+				t.Fatalf("log = %q, want no warning for an untrimmed outcome", got)
 			}
 		})
 	}

@@ -147,7 +147,7 @@ func toolCallResult(call map[string]json.RawMessage, startTool string) (toolResu
 		return toolResult{}, resultMalformed
 	}
 	for outcome, value := range parsed.Result {
-		if firstLine(outcome) == "" {
+		if outcome == "" || firstLine(outcome) != outcome {
 			return toolResult{}, resultAbsent
 		}
 		return outcomeResult(entry.name, outcome, value), resultRead
