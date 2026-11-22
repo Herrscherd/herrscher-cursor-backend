@@ -29,7 +29,7 @@ const (
 var wholeNumber = regexp.MustCompile(`^(0|-?[1-9]\d*)$`)
 
 type toolCallTracker struct {
-	open              map[string]openCall
+	open              map[string]string
 	seen              map[string]struct{}
 	openBound         boundReport
 	seenBound         boundReport
@@ -60,12 +60,7 @@ type boundReport struct {
 	reported onceWarning
 }
 
-type openCall struct {
-	tool string
-	key  string
-}
-
-func (t *toolCallTracker) begin(callID, tool, key string) bool {
+func (t *toolCallTracker) begin(callID, tool string) bool {
 	if len(callID) > maxCallIDBytes {
 		return false
 	}
@@ -78,7 +73,7 @@ func (t *toolCallTracker) begin(callID, tool, key string) bool {
 	}
 	if t.seen == nil {
 		t.seen = make(map[string]struct{})
-		t.open = make(map[string]openCall)
+		t.open = make(map[string]string)
 		t.openBound = boundReport{name: "max_open", limit: maxOpenToolCalls}
 		t.seenBound = boundReport{name: "max_seen", limit: maxSeenToolCalls}
 	}
@@ -90,7 +85,7 @@ func (t *toolCallTracker) begin(callID, tool, key string) bool {
 		t.openBound.warnOnce()
 		return false
 	}
-	t.open[callID] = openCall{tool: tool, key: key}
+	t.open[callID] = tool
 	return true
 }
 
@@ -100,10 +95,10 @@ func (b *boundReport) warnOnce() {
 	}
 }
 
-func (t *toolCallTracker) finish(callID string) (openCall, bool) {
-	call, open := t.open[callID]
+func (t *toolCallTracker) finish(callID string) (string, bool) {
+	tool, open := t.open[callID]
 	delete(t.open, callID)
-	return call, open
+	return tool, open
 }
 
 type toolEntry struct {
@@ -134,12 +129,12 @@ const (
 	resultRead
 )
 
-func toolCallResult(call map[string]json.RawMessage, startKey string) (toolResult, resultReading) {
+func toolCallResult(call map[string]json.RawMessage, startTool string) (toolResult, resultReading) {
 	entry, ok := singleTool(call)
 	if !ok {
 		return toolResult{}, resultAbsent
 	}
-	if entry.name != startKey {
+	if entry.name != startTool {
 		return toolResult{}, resultMalformed
 	}
 	var parsed struct {
@@ -307,9 +302,4 @@ func boundRunes(text string) string {
 		runes = runes[:maxToolErrorRunes]
 	}
 	return string(runes)
-}
-
-func toolKey(call map[string]json.RawMessage) string {
-	entry, _ := singleTool(call)
-	return entry.name
 }

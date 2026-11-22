@@ -113,3 +113,26 @@ func TestEndOfAnotherToolKeepsTheIDSeen(t *testing.T) {
 		t.Fatalf("tool events = %+v, want the reused id to start no second call and the later end to emit nothing", events)
 	}
 }
+
+func TestEndOfAnotherToolWarnsOncePerTurn(t *testing.T) {
+	logged := captureLog(t)
+	shellEnd := completedLine(`{"shellToolCall":{"args":{"command":"ls"},"result":{"success":{}}}}`)
+	readTurnEvents(t, readStartedLine, shellEnd, withCallID(readStartedLine, "call-2"), withCallID(shellEnd, "call-2"))
+	got := nonEmptyLines(logged.String())
+	if len(got) != 1 {
+		t.Fatalf("log has %d lines, want one warning for the turn:\n%s", len(got), logged)
+	}
+	if !strings.Contains(got[0], "level=WARN") || !strings.HasSuffix(got[0], `msg="tool call result carries more than one outcome or another tool than its start, the call stays started"`) {
+		t.Fatalf("warning = %q, want a WARN with the message alone and no value", got[0])
+	}
+}
+
+func TestEndAfterAStartOfTwoToolsEmitsNothing(t *testing.T) {
+	twoTools := `{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"README.md"}},"shellToolCall":{"args":{"command":"ls"}}},"session_id":"s"}`
+	events := toolEvents(readTurnEvents(t, twoTools, readSucceededLine))
+	for i, event := range events {
+		if event.ToolCall != nil || event.Kind == contracts.BackendKindToolDone {
+			t.Fatalf("event %d = %+v, want no call opened and no tool_done", i, event)
+		}
+	}
+}

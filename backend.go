@@ -383,25 +383,25 @@ func emitAssistantText(event cursorEvent, onEvent func(contracts.BackendEvent), 
 
 func emitToolCall(event cursorEvent, onEvent func(contracts.BackendEvent), tools *toolCallTracker) {
 	started := toolCallEvent(event.ToolCall)
-	if event.CallID != "" && tools.begin(event.CallID, started.Tool, toolKey(event.ToolCall)) {
+	if event.CallID != "" && tools.begin(event.CallID, started.Tool) {
 		started.ToolCall = &contracts.ToolCall{ID: event.CallID, Tool: started.Tool, Detail: started.Detail, State: contracts.ToolCallStarted}
 	}
 	emit(onEvent, started)
 }
 
 func emitToolDone(event cursorEvent, onEvent func(contracts.BackendEvent), tools *toolCallTracker) {
-	call, open := tools.finish(event.CallID)
+	tool, open := tools.finish(event.CallID)
 	if !open {
 		return
 	}
-	result, reading := toolCallResult(event.ToolCall, call.key)
+	result, reading := toolCallResult(event.ToolCall, tool)
 	if reading == resultMalformed {
 		tools.warnMalformedOnce()
 	}
 	if reading != resultRead {
 		return
 	}
-	emit(onEvent, contracts.BackendEvent{Kind: contracts.BackendKindToolDone, ToolCall: &contracts.ToolCall{ID: event.CallID, Tool: call.tool, State: result.state, Error: result.reason}})
+	emit(onEvent, contracts.BackendEvent{Kind: contracts.BackendKindToolDone, ToolCall: &contracts.ToolCall{ID: event.CallID, Tool: tool, State: result.state, Error: result.reason}})
 }
 
 func finishTurn(event cursorEvent, onEvent func(contracts.BackendEvent)) turnResult {
