@@ -401,6 +401,25 @@ func TestFailureTextKeepsEachStringField(t *testing.T) {
 	}
 }
 
+func TestFailureTextSkipsFieldsWhoseFirstLineIsBlank(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+		want   string
+	}{
+		{name: "blank message keeps the next field", result: `{"error":{"message":" ","stderr":"boom"}}`, want: "boom"},
+		{name: "blank fields fall back to the result name", result: `{"error":{"message":" ","stderr":"\n\t"}}`, want: "error"},
+		{name: "blank bare string falls back to the result name", result: `{"error":"  "}`, want: "error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := doneCallOf(t, "readToolCall", tc.result); got.State != contracts.ToolCallFailed || got.Error != tc.want {
+				t.Fatalf("call = %+v, want a failed call with error %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestShellFailureKeepsItsExitCodeWhenStderrHasTheWrongType(t *testing.T) {
 	got := doneCallOf(t, "shellToolCall", `{"failure":{"exitCode":2,"stderr":5}}`)
 	if got.Error != "exit code 2" {

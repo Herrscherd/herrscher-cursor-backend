@@ -190,15 +190,15 @@ func orDefault(text, fallback string) string {
 func failureText(value json.RawMessage) string {
 	var text string
 	if json.Unmarshal(value, &text) == nil {
-		return text
+		return firstLine(text)
 	}
 	fields, isObject := decodeFields(value)
 	if !isObject {
 		return ""
 	}
 	for _, name := range []string{"message", "error", "stderr", "reason"} {
-		if field := fields.text(name); field != "" {
-			return field
+		if line := firstLine(fields.text(name)); line != "" {
+			return line
 		}
 	}
 	return ""

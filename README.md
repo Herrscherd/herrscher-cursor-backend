@@ -47,10 +47,10 @@ timeout reads `timeout after Nms`, a rejection `rejected: <reason>`, a spawn
 failure `spawn error: <error>` and a denial `permission denied: <error>`. A
 rejection, a spawn failure or a denial with no text reads as the name of its
 result, as a timeout or a failure without its number does. Any other failure
-takes the first non-empty of `message`, `error`, `stderr` or
-`reason`, each read on its own, so a field of the wrong JSON type is skipped
-and the others still count. A bare string result is taken as it is, and
-without any of them the error is the name of the result. A `shellToolCall`
+takes the first of `message`, `error`, `stderr` or `reason` whose first line is
+not blank, each read on its own, so a field of the wrong JSON type or a blank
+one is skipped and the others still count. A bare string result is taken by its
+first line, and without any of them the error is the name of the result. A `shellToolCall`
 reads `exitCode` and `timeoutMs` only as whole numbers in the int32 range, and
 `timeoutMs` only when it is not negative. A string, a fraction, an exponent,
 `-0`, a value out of range or a missing value falls back to the name of the
