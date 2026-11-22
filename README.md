@@ -33,8 +33,15 @@ does not set it.
 ## Two modes
 
 `stream`, the default, uses `--output-format stream-json` and maps assistant
-text blocks, `tool_call` starts and the terminal `result` event onto
-`contracts.BackendEvent`. Each assistant text block after the first non-blank
+text blocks, `tool_call` starts and finishes, and the terminal `result` event
+onto `contracts.BackendEvent`. A call's start is a `tool` event whose
+`ToolCall` is in the `started` state, under the `call_id` of the line. Its end
+is a `tool_done` event in the `succeeded` state, or in the `failed` state with
+an `Error` taken from the first line of the failure, bounded to 200 runes. A
+finished line whose start the turn never saw emits nothing. A turn remembers
+the tool of each open call, up to 256 calls: past that bound a call still
+starts, but its end is not reported. A `tool` line with no `call_id` keeps only
+the legacy `Tool` and `Detail` fields, with no `ToolCall`. Each assistant text block after the first non-blank
 text block of a turn carries a leading blank line (`\n\n`), so consumers that
 concatenate text events keep the blocks apart. Unlike the claude backend, which
 trims each block's text, this backend emits the text as it arrives: a block that
