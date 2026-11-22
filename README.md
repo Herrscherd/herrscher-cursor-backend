@@ -44,8 +44,9 @@ is in the `started` state, under the `call_id` of the line. Its end is a
 `Error` of at most 200 runes. For a `shellToolCall` the error reads `exit code
 N`, followed by the first non-blank line of stderr in parentheses when there is
 one. When `aborted` is true the error reads `aborted`, followed by `, exit code
-N` when `exitCode` is present, then the first non-blank line of stderr in
-parentheses the same way (`aborted (line)` without an exit code). Otherwise a
+N` when `exitCode` is a whole number in the int32 range, then the first
+non-blank line of stderr in parentheses the same way (`aborted (line)` without
+an exit code). Otherwise a
 timeout reads `timeout after Nms`, a rejection `rejected: <reason>`, a spawn
 failure `spawn error: <error>` and a denial `permission denied: <error>`. A
 rejection, a spawn failure or a denial with no text reads as the name of its

@@ -65,7 +65,7 @@ func TestAmbiguousResultFreesTheOpenPlace(t *testing.T) {
 		lines = append(lines, withCallID(readStartedLine, fmt.Sprintf("call-%d", i)))
 	}
 	lines = append(lines,
-		withCallID(readSucceededLine, "call-0"),
+		withCallID(completedLine(readCallWithResult(ambiguousResult)), "call-0"),
 		withCallID(readStartedLine, fmt.Sprintf("call-%d", maxOpenToolCalls)),
 	)
 	events := toolEvents(readTurnEvents(t, lines...))
