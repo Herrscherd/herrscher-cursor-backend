@@ -447,3 +447,58 @@ func TestShellTimeoutCountsOnlyWholeNumbers(t *testing.T) {
 		})
 	}
 }
+
+func withCallID(line, id string) string {
+	return strings.Replace(line, "call-1", id, 1)
+}
+
+func nonEmptyLines(text string) []string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func TestEachBoundWarnsOnceAsItsFirstRefusalPerTurn(t *testing.T) {
+	logged := captureLog(t)
+	firstTurn := make([]string, 0, maxSeenToolCalls+1)
+	for i := range maxSeenToolCalls + 1 {
+		firstTurn = append(firstTurn, withCallID(readStartedLine, fmt.Sprintf("call-%d", i)))
+	}
+	readTurnEvents(t, firstTurn...)
+	secondTurn := make([]string, 0, maxOpenToolCalls+1)
+	for i := range maxOpenToolCalls + 1 {
+		secondTurn = append(secondTurn, withCallID(readStartedLine, fmt.Sprintf("call-%d", i)))
+	}
+	readTurnEvents(t, secondTurn...)
+
+	want := []string{
+		"bound=max_open limit=256",
+		"bound=max_seen limit=4096",
+		"bound=max_open limit=256",
+	}
+	got := nonEmptyLines(logged.String())
+	if len(got) != len(want) {
+		t.Fatalf("log has %d lines, want %d warnings, one per bound per turn:\n%s", len(got), len(want), logged)
+	}
+	for i := range want {
+		if !strings.Contains(got[i], "level=WARN") || !strings.HasSuffix(got[i], want[i]) {
+			t.Fatalf("warning %d = %q, want a WARN ending with %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestNoBoundWarningWhileNoStartIsRefused(t *testing.T) {
+	logged := captureLog(t)
+	lines := make([]string, 0, maxOpenToolCalls)
+	for i := range maxOpenToolCalls {
+		lines = append(lines, withCallID(readStartedLine, fmt.Sprintf("call-%d", i)))
+	}
+	readTurnEvents(t, lines...)
+	if logged.Len() != 0 {
+		t.Fatalf("log = %q, want none while every start is accepted", logged)
+	}
+}

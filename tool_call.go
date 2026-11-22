@@ -25,10 +25,16 @@ const (
 var wholeNumber = regexp.MustCompile(`^-?(0|[1-9]\d*)$`)
 
 type toolCallTracker struct {
-	open              map[string]string
-	seen              map[string]struct{}
-	openBoundReported bool
-	seenBoundReported bool
+	open      map[string]string
+	seen      map[string]struct{}
+	openBound boundReport
+	seenBound boundReport
+}
+
+type boundReport struct {
+	name     string
+	limit    int
+	reported bool
 }
 
 func (t *toolCallTracker) begin(callID, tool string) bool {
@@ -36,39 +42,33 @@ func (t *toolCallTracker) begin(callID, tool string) bool {
 		return false
 	}
 	if len(t.seen) >= maxSeenToolCalls {
-		t.reportSeenBound()
+		t.seenBound.warnOnce()
 		return false
 	}
 	if t.seen == nil {
 		t.seen = make(map[string]struct{})
 		t.open = make(map[string]string)
+		t.openBound = boundReport{name: "max_open", limit: maxOpenToolCalls}
+		t.seenBound = boundReport{name: "max_seen", limit: maxSeenToolCalls}
 	}
 	t.seen[callID] = struct{}{}
 	if tool == "" {
 		return false
 	}
 	if len(t.open) >= maxOpenToolCalls {
-		t.reportOpenBound()
+		t.openBound.warnOnce()
 		return false
 	}
 	t.open[callID] = tool
 	return true
 }
 
-func (t *toolCallTracker) reportOpenBound() {
-	if t.openBoundReported {
+func (b *boundReport) warnOnce() {
+	if b.reported {
 		return
 	}
-	t.openBoundReported = true
-	slog.Warn("tool calls reach the open bound of the turn, later starts carry no lifecycle", "max_open", maxOpenToolCalls)
-}
-
-func (t *toolCallTracker) reportSeenBound() {
-	if t.seenBoundReported {
-		return
-	}
-	t.seenBoundReported = true
-	slog.Warn("tool calls reach the seen bound of the turn, later starts carry no lifecycle", "max_seen", maxSeenToolCalls)
+	b.reported = true
+	slog.Warn("tool calls reach a bound of the turn, later starts carry no lifecycle", "bound", b.name, "limit", b.limit)
 }
 
 func (t *toolCallTracker) finish(callID string) (string, bool) {
