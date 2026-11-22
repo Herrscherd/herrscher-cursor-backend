@@ -16,6 +16,10 @@ Category: backend, the model edge. Ports: `contracts.Backend`, and
 herrscher plugin add github.com/Herrscherd/herrscher-cursor-backend
 ```
 
+Building the module needs the Go toolchain go1.27.4: `go.mod` pins it with
+`toolchain go1.27.4` for the GO-2026-6859 advisory on `net/http`, and a `go`
+command older than that fetches it on first use.
+
 ## Configuration
 
 | Setting | Default | What it is |
@@ -42,20 +46,36 @@ N`, followed by the first line of stderr in parentheses when there is one; a
 timeout reads `timeout after Nms`, a rejection `rejected: <reason>`, a spawn
 failure `spawn error: <error>` and a denial `permission denied: <error>`. Any
 other failure takes the first non-empty of `message`, `error`, `stderr` or
-`reason`, a bare string result is taken as it is, and without any of them the
-error is the name of the result. So `Error` is the first line of stderr or of a
-message, which can carry a secret: the host exports it only on opt-in. A
-finished line whose start the turn never saw emits nothing. A finished line
-whose result is absent or unreadable emits nothing either, and its call stays
-`started`, with no `tool_done`. The turn tracks the tool of each open call, up
-to 256 open calls. A `started` line whose `call_id` is already open, or that
-comes past that bound, emits a plain `tool` event with no `ToolCall`, and leaves
-the tracker as it was: an ID that is not tracked never leaves as `started`. A
-second finish for the same ID emits nothing, because the first one removes the
-ID. A call still open when the turn ends, whether on its result, on an error or
-on an interruption, stays `started` with no `tool_done`: the tracker belongs to
-one turn and is dropped with it. A `tool` line with no `call_id` keeps only the
-legacy `Tool` and `Detail` fields, with no `ToolCall`. Each assistant text block
+`reason`, each read on its own, so a field of the wrong JSON type is skipped
+and the others still count. A bare string result is taken as it is, and
+without any of them the error is the name of the result. A `shellToolCall`
+reads `exitCode` and `timeoutMs` only as whole numbers: a string, a fraction,
+an exponent or a missing value falls back to the name of the result.
+
+`Error` is therefore the first line of stderr or of a message, and it can carry
+a secret, as `Detail` can. The contract requires every exporter on the host side
+to send `Error`, like `Detail`, only when the operator opts in.
+
+A finished line whose start the turn never saw emits nothing. A finished line
+whose result is absent or unreadable emits nothing either: its call stays
+`started`, with no `tool_done`, and that finish still frees the call's place.
+
+Each turn keeps two sets of `call_id`, and only a start touches them. The open
+set holds the calls that started and have not finished, up to 256. The seen set
+holds every ID a start has presented, up to 4096. An ID enters the seen set as
+soon as its start arrives, whether that start opens a call, is refused by the
+open bound, or names no tool. A `started` line opens a call only when its ID is
+not seen yet, the open set is under 256 and the seen set is under 4096.
+Otherwise it leaves as a plain `tool` event with no `ToolCall`, and the open set
+is left alone. A start refused by the open bound is still recorded as seen, so
+it stays a plain `tool` event for the rest of the turn, even after a place frees
+up. A start past the seen bound is not recorded at all, and its finish emits
+nothing. A finish emits only for an ID in the open set: it frees that place, and
+the ID stays seen. A repeated or unknown finish emits nothing. A call still open
+when the turn ends, whether on its result, on an error or on an interruption,
+stays `started` with no `tool_done`: the sets belong to one turn and are dropped
+with it. A `tool` line with no `call_id` keeps only the legacy `Tool` and
+`Detail` fields, with no `ToolCall`. Each assistant text block
 after the first non-blank text block of a turn carries a leading blank line
 (`\n\n`), so consumers that concatenate text events keep the blocks apart.
 Unlike the claude backend, which trims each block's text, this backend emits the
@@ -204,7 +224,8 @@ What the catalog does not model:
 ## Development
 
 This module sits outside the parent `go.work`, so local commands need
-`GOWORK=off`. It has two kinds of package:
+`GOWORK=off`. They run on the toolchain `go.mod` pins, go1.27.4. It has two
+kinds of package:
 
 - the root `cursor` package, the plugin module compiled into the herrscher host;
 - `tools/commentcheck`, build tooling that refuses comments outside the
