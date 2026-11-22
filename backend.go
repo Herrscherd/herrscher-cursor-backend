@@ -424,17 +424,17 @@ type turnResult struct {
 }
 
 func toolCallEvent(call map[string]json.RawMessage) contracts.BackendEvent {
-	name, body, ok := singleTool(call)
+	entry, ok := singleTool(call)
 	if !ok {
 		return contracts.BackendEvent{Kind: eventKindTool}
 	}
 	var parsed struct {
 		Args map[string]any `json:"args"`
 	}
-	if json.Unmarshal(body, &parsed) != nil {
-		return contracts.BackendEvent{Kind: eventKindTool, Tool: name}
+	if json.Unmarshal(entry.body, &parsed) != nil {
+		return contracts.BackendEvent{Kind: eventKindTool, Tool: entry.name}
 	}
-	return contracts.BackendEvent{Kind: eventKindTool, Tool: name, Detail: toolCallSummary(parsed.Args)}
+	return contracts.BackendEvent{Kind: eventKindTool, Tool: entry.name, Detail: toolCallSummary(parsed.Args)}
 }
 
 func toolCallSummary(args map[string]any) string {

@@ -43,14 +43,19 @@ func (t *toolCallTracker) finish(callID string) (string, bool) {
 	return tool, known
 }
 
-func singleTool(call map[string]json.RawMessage) (string, json.RawMessage, bool) {
+type toolEntry struct {
+	name string
+	body json.RawMessage
+}
+
+func singleTool(call map[string]json.RawMessage) (toolEntry, bool) {
 	if len(call) != 1 {
-		return "", nil, false
+		return toolEntry{}, false
 	}
 	for name, body := range call {
-		return name, body, true
+		return toolEntry{name: name, body: body}, true
 	}
-	return "", nil, false
+	return toolEntry{}, false
 }
 
 type toolResult struct {
@@ -59,19 +64,19 @@ type toolResult struct {
 }
 
 func toolCallResult(call map[string]json.RawMessage) (toolResult, bool) {
-	name, body, ok := singleTool(call)
+	entry, ok := singleTool(call)
 	if !ok {
 		return toolResult{}, false
 	}
 	var parsed struct {
 		Result map[string]json.RawMessage `json:"result"`
 	}
-	if json.Unmarshal(body, &parsed) != nil || len(parsed.Result) == 0 {
+	if json.Unmarshal(entry.body, &parsed) != nil || len(parsed.Result) == 0 {
 		return toolResult{}, false
 	}
 	for outcome, value := range parsed.Result {
 		if outcome != toolResultSuccess {
-			return toolResult{state: contracts.ToolCallFailed, reason: failureReason(name, outcome, value)}, true
+			return toolResult{state: contracts.ToolCallFailed, reason: failureReason(entry.name, outcome, value)}, true
 		}
 	}
 	return toolResult{state: contracts.ToolCallSucceeded}, true
