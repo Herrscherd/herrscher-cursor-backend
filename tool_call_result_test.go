@@ -136,3 +136,22 @@ func TestEndAfterAStartOfTwoToolsEmitsNothing(t *testing.T) {
 		}
 	}
 }
+
+func TestEndWithAnEmptyOutcomeEmitsNoToolDone(t *testing.T) {
+	events := toolEvents(readTurnEvents(t, readStartedLine, completedLine(readCallWithResult(`{"":{"message":"boom"}}`))))
+	if len(events) != 1 || events[0].ToolCall == nil || events[0].ToolCall.State != contracts.ToolCallStarted {
+		t.Fatalf("tool events = %+v, want the started call alone, with no tool_done", events)
+	}
+}
+
+func TestEndWithTwoToolKeysEmitsNoToolDoneAndNoWarning(t *testing.T) {
+	logged := captureLog(t)
+	twoTools := completedLine(`{"readToolCall":{"result":{"success":{}}},"shellToolCall":{"result":{"success":{}}}}`)
+	events := toolEvents(readTurnEvents(t, readStartedLine, twoTools))
+	if len(events) != 1 || events[0].ToolCall == nil || events[0].ToolCall.State != contracts.ToolCallStarted {
+		t.Fatalf("tool events = %+v, want the started call alone, with no tool_done", events)
+	}
+	if got := nonEmptyLines(logged.String()); len(got) != 0 {
+		t.Fatalf("log = %q, want no warning for an end with two tool keys", got)
+	}
+}

@@ -40,9 +40,10 @@ does not set it.
 text blocks, `tool_call` starts and finishes, and the terminal `result` event
 onto `contracts.BackendEvent`.
 
-Each turn keeps two sets of `call_id`. The open set holds the calls that
-started and have not finished, up to 256. The seen set holds the IDs that
-starts presented, up to 4096. A start adds its ID to the sets, and a finish only
+Each turn keeps two sets of `call_id`. The open set holds the calls that started
+and have not finished, up to 256. The seen set holds the IDs that starts
+presented, up to 4096. A start that opens a call adds its ID to both sets, and a
+refused start adds it to the seen set only as the rules below say. A finish only
 removes its ID from the open set.
 
 A `tool_call` line in the `started` state opens a call when all of these hold:
@@ -69,7 +70,8 @@ set. It frees that place, the ID stays seen, and a repeated or unknown finish
 emits nothing. Its result then decides what it emits:
 
 - an absent or unreadable result emits no `tool_done`, and the call stays
-  `started`;
+  `started`; a result whose outcome key is empty, and an end whose `tool_call`
+  holds no tool key or several, count as absent and log no warning;
 - a result with more than one outcome key, or an end whose tool key is not the
   one of its start, is malformed: it emits no `tool_done`, the call stays
   `started`, and the turn logs one warning, without the value, however many
@@ -91,25 +93,25 @@ reads:
 - `failure` without `aborted: true`: `exit code N`, followed by the first
   non-blank line of stderr in parentheses when there is one, or `failure` when
   `exitCode` is not valid;
-- `timeout`: `timeout after Nms`, or `timeout` when `timeoutMs` is not valid or
-  is negative;
+- `timeout`: `timeout after Nms`, or `timeout` when `timeoutMs` is not valid;
 - `rejected`: `rejected: <reason>`; `spawnError`: `spawn error: <error>`;
   `permissionDenied`: `permission denied: <error>`; each reads as the name of
   its outcome when that field has no non-blank line;
 - a result that is not an object reads as the name of its outcome.
 
-Only a `failure` reads `aborted`. A valid `exitCode` or `timeoutMs` is a whole
-number in the int32 range, written without a fraction, an exponent or `-0`. Any
-other value is never quoted. Every other tool, and a `shellToolCall` with any
-other outcome, reads a bare string result as its text. An object result takes
-the first of `message`, `error`, `stderr` or `reason` that has a non-blank
-line, each read on its own, so a field of the wrong JSON type or a blank one is
-skipped and the others still count. Without any of them, the error is the name
-of the outcome.
+Only a `failure` reads `aborted`. A valid `exitCode` is a whole number in the
+int32 range, and a valid `timeoutMs` is also zero or more, each written without
+a fraction, an exponent or `-0`. Any other value is never quoted. Every other
+tool, and a `shellToolCall` with any other outcome, reads a bare string result
+as its text. An object result takes the first of `message`, `error`, `stderr` or
+`reason` that has a non-blank line, each read on its own, so a field of the
+wrong JSON type or a blank one is skipped and the others still count. Without
+any of them, and for a blank string or a value that is neither a string nor an
+object, the error is the name of the outcome.
 
-`Error`, the first non-blank line of stderr or of a message, can carry a secret,
-as `Detail` can. The contract requires every exporter on the host side to send
-`Error`, like `Detail`, only when the operator opts in.
+`Error`, the first non-blank line of stderr, of a message, of a reason or of an
+error, can carry a secret, as `Detail` can. The contract requires every exporter
+on the host side to send `Error`, like `Detail`, only when the operator opts in.
 
 The sets belong to one turn and are dropped with it. A call still open when the
 turn ends, whether on the turn's `result` event, on an error or on an
