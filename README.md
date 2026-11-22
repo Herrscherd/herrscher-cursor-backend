@@ -82,7 +82,8 @@ emits nothing. Its result then decides what it emits:
   `Error` below.
 
 `Error` is always one line of at most 200 runes: the first non-blank line of
-its text, with leading blank lines skipped and the rest of the text dropped.
+its text, with leading blank lines skipped and the rest of the text dropped. A
+line ends at a line feed or a carriage return.
 For a `shellToolCall` whose outcome is `failure`, `timeout`, `rejected`,
 `spawnError` or `permissionDenied`, the result must be an object, and the error
 reads:

@@ -20,6 +20,8 @@ func TestFailureErrorIsTheFirstNonBlankLine(t *testing.T) {
 		{name: "object field starting with a newline", tool: "readToolCall", result: `{"error":{"message":"\n  boom\nx"}}`, want: "boom"},
 		{name: "bare string starting with a newline", tool: "readToolCall", result: `{"error":"\n  boom\nx"}`, want: "boom"},
 		{name: "shell stderr starting with a newline", tool: "shellToolCall", result: `{"failure":{"exitCode":3,"stderr":"\n  boom\nx"}}`, want: "exit code 3 (boom)"},
+		{name: "object field with a carriage return", tool: "readToolCall", result: `{"error":{"message":"boom\rsecret"}}`, want: "boom"},
+		{name: "shell stderr with a carriage return", tool: "shellToolCall", result: `{"failure":{"exitCode":3,"stderr":"boom\rsecret"}}`, want: "exit code 3 (boom)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -150,6 +152,7 @@ func TestEndWithAnUntrimmedOutcomeEmitsNoToolDoneAndNoWarning(t *testing.T) {
 		{name: "trailing newline", result: `{"success\n":{}}`},
 		{name: "leading space", result: `{" failure":{"message":"boom"}}`},
 		{name: "two lines", result: `{"failure\nmore":{}}`},
+		{name: "carriage return", result: `{"fail\rure":{}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

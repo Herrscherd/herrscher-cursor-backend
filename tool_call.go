@@ -295,7 +295,10 @@ func (f rawFields) int32Text(name string, least int64) (string, bool) {
 }
 
 func firstLine(text string) string {
-	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	line := strings.TrimSpace(text)
+	if end := strings.IndexAny(line, "\r\n"); end >= 0 {
+		line = line[:end]
+	}
 	return strings.TrimSpace(line)
 }
 
