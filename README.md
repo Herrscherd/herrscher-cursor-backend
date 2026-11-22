@@ -103,9 +103,9 @@ finish emits nothing. A call still open when the turn ends, whether on its
 result, on an error or on an interruption, stays `started` with no `tool_done`:
 the sets belong to one turn and are dropped with it. A `tool` line with no
 `call_id` keeps only the legacy `Tool` and `Detail` fields, with no `ToolCall`,
-when its `tool_call` holds a single tool key. With two keys or more it carries
-neither `Tool` nor `Detail`, where earlier releases named one key picked at
-random.
+when its `tool_call` holds a single tool key. With no key, or with two keys or
+more, it carries neither `Tool` nor `Detail`, where earlier releases named one
+of several keys picked at random.
 Each assistant text block after the first non-blank text block of a turn carries
 a leading blank line (`\n\n`), so consumers that concatenate text events keep
 the blocks apart. Unlike the claude backend, which trims each block's text, this
