@@ -136,3 +136,26 @@ func TestShellVariantWithoutDetailNamesItsResult(t *testing.T) {
 		})
 	}
 }
+
+func TestToolNameAtTheByteBoundOpensACall(t *testing.T) {
+	name := strings.Repeat("n", maxToolNameBytes)
+	want := contracts.ToolCall{ID: "call-1", Tool: name, State: contracts.ToolCallSucceeded}
+	if got := doneCallOf(t, name, `{"success":{}}`); got != want {
+		t.Fatalf("done call = %+v, want %+v", got, want)
+	}
+}
+
+func TestToolNameBeyondTheByteBoundNeverOpensACall(t *testing.T) {
+	name := strings.Repeat("n", maxToolNameBytes+1)
+	started := fmt.Sprintf(`{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{%q:{"args":{"path":"README.md"}}},"session_id":"s"}`, name)
+	done := completedLine(fmt.Sprintf(`{%q:{"args":{"path":"README.md"},"result":{"success":{}}}}`, name))
+	tools := toolEvents(readTurnEvents(t, started, done, readStartedLine))
+	if len(tools) != 2 {
+		t.Fatalf("tool events = %+v, want the bare start of the long name and the bare later start, and no done", tools)
+	}
+	for i := range tools {
+		if tools[i].Kind != contracts.BackendKindTool || tools[i].ToolCall != nil {
+			t.Fatalf("event %d = %+v, want a bare tool event", i, tools[i])
+		}
+	}
+}

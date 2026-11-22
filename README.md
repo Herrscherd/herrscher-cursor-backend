@@ -56,6 +56,10 @@ reads `exitCode` and `timeoutMs` only as whole numbers in the int32 range, and
 `-0`, a value out of range or a missing value falls back to the name of the
 result, and the value itself is never quoted.
 
+A call with no tool name, or with a tool name longer than 256 bytes, never
+opens: its start is a bare `tool` event, its end emits nothing, and its
+`call_id` still counts as seen, so a later start with the same id stays bare.
+
 `Error` is therefore the first line of stderr or of a message, and it can carry
 a secret, as `Detail` can. The contract requires every exporter on the host side
 to send `Error`, like `Detail`, only when the operator opts in.

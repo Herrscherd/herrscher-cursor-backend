@@ -15,6 +15,7 @@ const (
 	maxOpenToolCalls           = 256
 	maxSeenToolCalls           = 4096
 	maxCallIDBytes             = 256
+	maxToolNameBytes           = 256
 	maxToolErrorRunes          = 200
 	toolResultSuccess          = "success"
 	toolResultFailure          = "failure"
@@ -58,7 +59,7 @@ func (t *toolCallTracker) begin(callID, tool string) bool {
 		t.seenBound = boundReport{name: "max_seen", limit: maxSeenToolCalls}
 	}
 	t.seen[callID] = struct{}{}
-	if tool == "" {
+	if tool == "" || len(tool) > maxToolNameBytes {
 		return false
 	}
 	if len(t.open) >= maxOpenToolCalls {
