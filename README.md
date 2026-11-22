@@ -49,8 +49,10 @@ other failure takes the first non-empty of `message`, `error`, `stderr` or
 `reason`, each read on its own, so a field of the wrong JSON type is skipped
 and the others still count. A bare string result is taken as it is, and
 without any of them the error is the name of the result. A `shellToolCall`
-reads `exitCode` and `timeoutMs` only as whole numbers: a string, a fraction,
-an exponent or a missing value falls back to the name of the result.
+reads `exitCode` and `timeoutMs` only as whole numbers in the int32 range, and
+`timeoutMs` only when it is not negative. A string, a fraction, an exponent,
+`-0`, a value out of range or a missing value falls back to the name of the
+result, and the value itself is never quoted.
 
 `Error` is therefore the first line of stderr or of a message, and it can carry
 a secret, as `Detail` can. The contract requires every exporter on the host side

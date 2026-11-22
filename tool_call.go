@@ -3,7 +3,9 @@ package cursor
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
@@ -23,7 +25,7 @@ const (
 	shellToolName              = "shellToolCall"
 )
 
-var wholeNumber = regexp.MustCompile(`^-?(0|[1-9]\d*)$`)
+var wholeNumber = regexp.MustCompile(`^(0|-?[1-9]\d*)$`)
 
 type toolCallTracker struct {
 	open      map[string]string
@@ -142,13 +144,13 @@ func shellFailureText(outcome string, value json.RawMessage) string {
 	}
 	switch outcome {
 	case toolResultFailure:
-		code, ok := fields.whole("exitCode")
+		code, ok := fields.int32Text("exitCode", math.MinInt32)
 		if !ok {
 			return ""
 		}
 		return exitCodeText(code, firstLine(fields.text("stderr")))
 	case toolResultTimeout:
-		milliseconds, ok := fields.whole("timeoutMs")
+		milliseconds, ok := fields.int32Text("timeoutMs", 0)
 		if !ok {
 			return ""
 		}
@@ -212,12 +214,16 @@ func (f rawFields) text(name string) string {
 	return text
 }
 
-func (f rawFields) whole(name string) (string, bool) {
-	raw := f[name]
-	if !wholeNumber.Match(raw) {
+func (f rawFields) int32Text(name string, least int64) (string, bool) {
+	raw := string(f[name])
+	if !wholeNumber.MatchString(raw) {
 		return "", false
 	}
-	return string(raw), true
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || value < least {
+		return "", false
+	}
+	return raw, true
 }
 
 func firstLine(text string) string {

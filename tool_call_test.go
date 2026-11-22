@@ -522,3 +522,30 @@ func TestCallIDAtTheByteBoundOpensACall(t *testing.T) {
 		t.Fatalf("done = %+v, want %+v", tools[1], want)
 	}
 }
+
+func TestShellWholeNumbersStayWithinTheirRange(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+		want   string
+	}{
+		{name: "exit code of minus zero", result: `{"failure":{"exitCode":-0}}`, want: toolResultFailure},
+		{name: "exit code just beyond int32", result: `{"failure":{"exitCode":2147483648}}`, want: toolResultFailure},
+		{name: "exit code just below int32", result: `{"failure":{"exitCode":-2147483649}}`, want: toolResultFailure},
+		{name: "exit code of the int32 maximum", result: `{"failure":{"exitCode":2147483647}}`, want: "exit code 2147483647"},
+		{name: "exit code of the int32 minimum", result: `{"failure":{"exitCode":-2147483648}}`, want: "exit code -2147483648"},
+		{name: "negative exit code within int32", result: `{"failure":{"exitCode":-1}}`, want: "exit code -1"},
+		{name: "timeout of minus zero", result: `{"timeout":{"timeoutMs":-0}}`, want: toolResultTimeout},
+		{name: "negative timeout", result: `{"timeout":{"timeoutMs":-1}}`, want: toolResultTimeout},
+		{name: "timeout just beyond int32", result: `{"timeout":{"timeoutMs":2147483648}}`, want: toolResultTimeout},
+		{name: "timeout of the int32 maximum", result: `{"timeout":{"timeoutMs":2147483647}}`, want: "timeout after 2147483647ms"},
+		{name: "timeout of zero", result: `{"timeout":{"timeoutMs":0}}`, want: "timeout after 0ms"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := doneCallOf(t, "shellToolCall", tc.result); got.State != contracts.ToolCallFailed || got.Error != tc.want {
+				t.Fatalf("call = %+v, want a failed call with error %q", got, tc.want)
+			}
+		})
+	}
+}
