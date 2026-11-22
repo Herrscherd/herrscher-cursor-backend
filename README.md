@@ -16,6 +16,10 @@ Category: backend, the model edge. Ports: `contracts.Backend`, and
 herrscher plugin add github.com/Herrscherd/herrscher-cursor-backend
 ```
 
+Building the module needs the Go toolchain go1.27.4: `go.mod` pins it with
+`toolchain go1.27.4` for the GO-2026-6859 advisory on `net/http`, and a `go`
+command older than that fetches it on first use.
+
 ## Configuration
 
 | Setting | Default | What it is |
@@ -33,13 +37,101 @@ does not set it.
 ## Two modes
 
 `stream`, the default, uses `--output-format stream-json` and maps assistant
-text blocks, `tool_call` starts and the terminal `result` event onto
-`contracts.BackendEvent`. Each assistant text block after the first non-blank
-text block of a turn carries a leading blank line (`\n\n`), so consumers that
-concatenate text events keep the blocks apart. Unlike the claude backend, which
-trims each block's text, this backend emits the text as it arrives: a block that
-ends with a newline, followed by another block, gives three line breaks at the
-join.
+text blocks, `tool_call` starts and finishes, and the terminal `result` event
+onto `contracts.BackendEvent`.
+
+Each turn keeps two sets of `call_id`. The open set holds the calls that started
+and have not finished, up to 256. The seen set holds the IDs that starts
+presented, up to 4096. A start that opens a call adds its ID to both sets, and a
+refused start adds it to the seen set only as the rules below say. A finish only
+removes its ID from the open set.
+
+A `tool_call` line in the `started` state opens a call when all of these hold:
+
+- its `call_id` is not empty, is at most 256 bytes long and is not in the seen
+  set;
+- its `tool_call` holds a single tool key, whose name is not empty and is at
+  most 256 bytes long;
+- the open set holds fewer than 256 calls and the seen set fewer than 4096 IDs.
+
+An opened call is a `tool` event whose `ToolCall` is in the `started` state,
+under the `call_id` of the line. Any other start is a plain `tool` event with no
+`ToolCall`. Its ID still enters the seen set when it is at most 256 bytes long
+and the seen set is under 4096, so a start refused for its tool key (none, two
+or more, an empty name or one over 256 bytes) or by the open bound keeps that ID
+bare for the rest of the turn, even after a place frees up. An ID over 256
+bytes, or one past the seen bound, is never recorded.
+The first start refused by each bound in a turn logs one `slog.Warn` per bound
+and per turn, with the attributes `bound` (`max_open` or `max_seen`) and
+`limit`.
+
+A `tool_call` line in the `completed` state emits only for an ID in the open
+set. It frees that place, the ID stays seen, and a repeated or unknown finish
+emits nothing. Its result then decides what it emits:
+
+- an absent or unreadable result emits no `tool_done`, and the call stays
+  `started`; a result whose outcome key is empty, blank, spans more than one
+  line or has blank space around it, and an end whose `tool_call` holds no tool
+  key or several, count as absent and log no warning;
+- a result with more than one outcome key, or an end whose tool key is not the
+  one of its start, is malformed: it emits no `tool_done`, the call stays
+  `started`, and the turn logs one warning, without the value, however many
+  such results it carries;
+- a `success` result emits a `tool_done` event in the `succeeded` state;
+- any other outcome emits a `tool_done` event in the `failed` state, with the
+  `Error` below.
+
+`Error` is always one line of at most 200 runes: the first non-blank line of
+its text, with leading blank lines skipped and the rest of the text dropped. A
+line ends at a line feed or a carriage return.
+For a `shellToolCall` whose outcome is `failure`, `timeout`, `rejected`,
+`spawnError` or `permissionDenied`, the result must be an object, and the error
+reads:
+
+- `failure` with `aborted: true`: `aborted`, followed by `, exit code N` when
+  `exitCode` is valid, then the first non-blank line of stderr in parentheses
+  when there is one (`aborted (line)` without a valid exit code, `aborted`
+  alone without either);
+- `failure` without `aborted: true`: `exit code N`, followed by the first
+  non-blank line of stderr in parentheses when there is one, or `failure` when
+  `exitCode` is not valid;
+- `timeout`: `timeout after Nms`, or `timeout` when `timeoutMs` is not valid;
+- `rejected`: `rejected: <reason>`; `spawnError`: `spawn error: <error>`;
+  `permissionDenied`: `permission denied: <error>`; each reads as the name of
+  its outcome when that field has no non-blank line;
+- a result that is not an object reads as the name of its outcome.
+
+Only a `failure` reads `aborted`. A valid `exitCode` is a whole number in the
+int32 range, and a valid `timeoutMs` is also zero or more, each written without
+a fraction, an exponent or `-0`. Any other value is never quoted. Every other
+tool, and a `shellToolCall` with any other outcome, reads a bare string result
+as its text. An object result takes the first of `message`, `error`, `stderr` or
+`reason` that has a non-blank line, each read on its own, so a field of the
+wrong JSON type or a blank one is skipped and the others still count. Without
+any of them, and for a blank string or a value that is neither a string nor an
+object, the error is the name of the outcome.
+
+`Error`, the first non-blank line of stderr, of a message, of a reason or of an
+error, can carry a secret, as `Detail` can. The contract requires every exporter
+on the host side to send `Error`, like `Detail`, only when the operator opts in.
+
+The sets belong to one turn and are dropped with it. A call still open when the
+turn ends, whether on the turn's `result` event, on an error or on an
+interruption, stays `started` with no `tool_done`. There is no reset: the
+contract's reset, which opens a new run in which a call ID may come back, is not
+implemented, because no reset has been observed from cursor-agent. A call ID
+that returns in a later turn is therefore a new call.
+
+A `tool` line with no `call_id` keeps only the legacy `Tool` and `Detail`
+fields, with no `ToolCall`, when its `tool_call` holds a single tool key. With
+no key, or with two keys or more, it carries neither `Tool` nor `Detail`, where
+earlier releases named one of several keys picked at random.
+
+Each assistant text block after the first non-blank text block of a turn carries
+a leading blank line (`\n\n`), so consumers that concatenate text events keep
+the blocks apart. Unlike the claude backend, which trims each block's text, this
+backend emits the text as it arrives: a block that ends with a newline, followed
+by another block, gives three line breaks at the join.
 
 Unlike a persistent-process backend, `cursor-agent` exits after every headless
 turn, so continuity comes from the session id in the `result` event. It is stored
@@ -183,7 +275,8 @@ What the catalog does not model:
 ## Development
 
 This module sits outside the parent `go.work`, so local commands need
-`GOWORK=off`. It has two kinds of package:
+`GOWORK=off`. They run on the toolchain `go.mod` pins, go1.27.4. It has two
+kinds of package:
 
 - the root `cursor` package, the plugin module compiled into the herrscher host;
 - `tools/commentcheck`, build tooling that refuses comments outside the

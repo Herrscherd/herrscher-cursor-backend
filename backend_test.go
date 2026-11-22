@@ -426,6 +426,8 @@ func FuzzConsumeLine(f *testing.F) {
 		`{"type":"system","subtype":"init","session_id":"sess-1"}`,
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]},"session_id":"sess-1"}`,
 		`{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"README.md"}}},"session_id":"sess-1"}`,
+		`{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"README.md"}}},"session_id":"sess-1"}`,
+		`{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"README.md"},"result":{"error":{"message":"no such file"}}}},"session_id":"sess-1"}`,
 		`{"type":"result","subtype":"success","is_error":false,"result":"Hello","session_id":"sess-1"}`,
 		"update available",
 		`{"type":"assis`,
@@ -433,7 +435,12 @@ func FuzzConsumeLine(f *testing.F) {
 		f.Add([]byte(line))
 	}
 	f.Fuzz(func(t *testing.T, line []byte) {
-		outcome := consumeLine(line, func(contracts.BackendEvent) {}, &turnTexts{})
+		var state turnState
+		outcome := consumeLine(line, func(ev contracts.BackendEvent) {
+			if err := ev.ValidateToolCall(); err != nil {
+				t.Fatalf("line %q emits an invalid event: %v", line, err)
+			}
+		}, &state)
 		if !outcome.isDone && outcome.turn != (turnResult{}) {
 			t.Fatalf("line %q yields a turn without ending the turn: %+v", line, outcome.turn)
 		}

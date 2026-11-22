@@ -110,6 +110,8 @@ func (k *BackendKind) UnmarshalText(text []byte) error {
 const (
 	eventKindTool     = "tool"
 	cursorEventResult = "result"
+	toolCallStarted   = "started"
+	toolCallCompleted = "completed"
 )
 
 func resolveBackend(config Config) BackendKind {
@@ -245,6 +247,7 @@ func baseArgv(base []string, format, model, resume string) []string {
 type cursorEvent struct {
 	Type      string `json:"type"`
 	Subtype   string `json:"subtype"`
+	CallID    string `json:"call_id"`
 	SessionID string `json:"session_id"`
 	IsError   bool   `json:"is_error"`
 	Result    string `json:"result"`
@@ -296,16 +299,21 @@ func (t *turnTexts) nextTextDetail(text string) string {
 	return textBlockSeparator + text
 }
 
+type turnState struct {
+	texts turnTexts
+	tools toolCallTracker
+}
+
 func readTurn(reader *bufio.Reader, onEvent func(contracts.BackendEvent)) (turnResult, error) {
 	var skipped int
-	var texts turnTexts
+	var state turnState
 	for {
 		line, err := readLine(reader)
 		if _, isTooLong := errors.AsType[*LineTooLongError](err); isTooLong {
 			return turnResult{}, err
 		}
 		if len(line) > 0 {
-			outcome := consumeLine(line, onEvent, &texts)
+			outcome := consumeLine(line, onEvent, &state)
 			if outcome.isDone {
 				return outcome.turn, nil
 			}
@@ -339,22 +347,25 @@ type lineOutcome struct {
 	isUnparsable bool
 }
 
-func consumeLine(line []byte, onEvent func(contracts.BackendEvent), texts *turnTexts) lineOutcome {
+func consumeLine(line []byte, onEvent func(contracts.BackendEvent), state *turnState) lineOutcome {
 	var event cursorEvent
 	if json.Unmarshal(line, &event) != nil {
 		return lineOutcome{isUnparsable: len(bytes.TrimSpace(line)) != 0}
 	}
-	turn, isDone := applyEvent(event, onEvent, texts)
+	turn, isDone := applyEvent(event, onEvent, state)
 	return lineOutcome{turn: turn, isDone: isDone}
 }
 
-func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent), texts *turnTexts) (turnResult, bool) {
+func applyEvent(event cursorEvent, onEvent func(contracts.BackendEvent), state *turnState) (turnResult, bool) {
 	switch event.Type {
 	case "assistant":
-		emitAssistantText(event, onEvent, texts)
+		emitAssistantText(event, onEvent, &state.texts)
 	case "tool_call":
-		if event.Subtype == "started" {
-			emitToolCall(event, onEvent)
+		switch event.Subtype {
+		case toolCallStarted:
+			emitToolCall(event, onEvent, &state.tools)
+		case toolCallCompleted:
+			emitToolDone(event, onEvent, &state.tools)
 		}
 	case cursorEventResult:
 		return finishTurn(event, onEvent), true
@@ -370,8 +381,27 @@ func emitAssistantText(event cursorEvent, onEvent func(contracts.BackendEvent), 
 	}
 }
 
-func emitToolCall(event cursorEvent, onEvent func(contracts.BackendEvent)) {
-	emit(onEvent, toolCallEvent(event.ToolCall))
+func emitToolCall(event cursorEvent, onEvent func(contracts.BackendEvent), tools *toolCallTracker) {
+	started := toolCallEvent(event.ToolCall)
+	if event.CallID != "" && tools.begin(event.CallID, started.Tool) {
+		started.ToolCall = &contracts.ToolCall{ID: event.CallID, Tool: started.Tool, Detail: started.Detail, State: contracts.ToolCallStarted}
+	}
+	emit(onEvent, started)
+}
+
+func emitToolDone(event cursorEvent, onEvent func(contracts.BackendEvent), tools *toolCallTracker) {
+	tool, open := tools.finish(event.CallID)
+	if !open {
+		return
+	}
+	result, reading := toolCallResult(event.ToolCall, tool)
+	if reading == resultMalformed {
+		tools.warnMalformedOnce()
+	}
+	if reading != resultRead {
+		return
+	}
+	emit(onEvent, contracts.BackendEvent{Kind: contracts.BackendKindToolDone, ToolCall: &contracts.ToolCall{ID: event.CallID, Tool: tool, State: result.state, Error: result.reason}})
 }
 
 func finishTurn(event cursorEvent, onEvent func(contracts.BackendEvent)) turnResult {
@@ -397,16 +427,17 @@ type turnResult struct {
 }
 
 func toolCallEvent(call map[string]json.RawMessage) contracts.BackendEvent {
-	for name, raw := range call {
-		var body struct {
-			Args map[string]any `json:"args"`
-		}
-		if json.Unmarshal(raw, &body) != nil {
-			return contracts.BackendEvent{Kind: eventKindTool, Tool: name}
-		}
-		return contracts.BackendEvent{Kind: eventKindTool, Tool: name, Detail: toolCallSummary(body.Args)}
+	entry, ok := singleTool(call)
+	if !ok {
+		return contracts.BackendEvent{Kind: eventKindTool}
 	}
-	return contracts.BackendEvent{Kind: eventKindTool}
+	var parsed struct {
+		Args map[string]any `json:"args"`
+	}
+	if json.Unmarshal(entry.body, &parsed) != nil {
+		return contracts.BackendEvent{Kind: eventKindTool, Tool: entry.name}
+	}
+	return contracts.BackendEvent{Kind: eventKindTool, Tool: entry.name, Detail: toolCallSummary(parsed.Args)}
 }
 
 func toolCallSummary(args map[string]any) string {
