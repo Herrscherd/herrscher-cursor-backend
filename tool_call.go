@@ -145,6 +145,9 @@ func shellFailureText(outcome string, value json.RawMessage) string {
 	}
 	switch outcome {
 	case toolResultFailure:
+		if fields.isTrue("aborted") {
+			return abortedText(fields)
+		}
 		code, ok := fields.int32Text("exitCode", math.MinInt32)
 		if !ok {
 			return ""
@@ -164,6 +167,18 @@ func shellFailureText(outcome string, value json.RawMessage) string {
 		return labelled("permission denied: ", fields.text("error"))
 	}
 	return ""
+}
+
+func abortedText(fields rawFields) string {
+	label := "aborted"
+	if code, ok := fields.int32Text("exitCode", math.MinInt32); ok {
+		label = "aborted, exit code " + code
+	}
+	stderrLine := firstLine(fields.text("stderr"))
+	if stderrLine == "" {
+		return label
+	}
+	return label + " (" + stderrLine + ")"
 }
 
 func labelled(label, text string) string {
@@ -221,6 +236,11 @@ func (f rawFields) text(name string) string {
 		return ""
 	}
 	return text
+}
+
+func (f rawFields) isTrue(name string) bool {
+	var flag bool
+	return json.Unmarshal(f[name], &flag) == nil && flag
 }
 
 func (f rawFields) int32Text(name string, least int64) (string, bool) {
