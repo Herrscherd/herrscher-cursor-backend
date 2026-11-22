@@ -383,8 +383,7 @@ func emitAssistantText(event cursorEvent, onEvent func(contracts.BackendEvent), 
 
 func emitToolCall(event cursorEvent, onEvent func(contracts.BackendEvent), tools *toolCallTracker) {
 	started := toolCallEvent(event.ToolCall)
-	if event.CallID != "" && started.Tool != "" {
-		tools.remember(event.CallID, started.Tool)
+	if event.CallID != "" && started.Tool != "" && tools.remember(event.CallID, started.Tool) {
 		started.ToolCall = &contracts.ToolCall{ID: event.CallID, Tool: started.Tool, Detail: started.Detail, State: contracts.ToolCallStarted}
 	}
 	emit(onEvent, started)
@@ -395,7 +394,10 @@ func emitToolDone(event cursorEvent, onEvent func(contracts.BackendEvent), tools
 	if !known {
 		return
 	}
-	result := toolCallResult(event.ToolCall)
+	result, hasResult := toolCallResult(event.ToolCall)
+	if !hasResult {
+		return
+	}
 	emit(onEvent, contracts.BackendEvent{Kind: contracts.BackendKindToolDone, ToolCall: &contracts.ToolCall{ID: event.CallID, Tool: tool, State: result.state, Error: result.reason}})
 }
 
@@ -422,17 +424,17 @@ type turnResult struct {
 }
 
 func toolCallEvent(call map[string]json.RawMessage) contracts.BackendEvent {
-	entry := soleTool(call)
-	if entry == nil {
+	name, body, ok := singleTool(call)
+	if !ok {
 		return contracts.BackendEvent{Kind: eventKindTool}
 	}
-	var body struct {
+	var parsed struct {
 		Args map[string]any `json:"args"`
 	}
-	if json.Unmarshal(entry.body, &body) != nil {
-		return contracts.BackendEvent{Kind: eventKindTool, Tool: entry.name}
+	if json.Unmarshal(body, &parsed) != nil {
+		return contracts.BackendEvent{Kind: eventKindTool, Tool: name}
 	}
-	return contracts.BackendEvent{Kind: eventKindTool, Tool: entry.name, Detail: toolCallSummary(body.Args)}
+	return contracts.BackendEvent{Kind: eventKindTool, Tool: name, Detail: toolCallSummary(parsed.Args)}
 }
 
 func toolCallSummary(args map[string]any) string {

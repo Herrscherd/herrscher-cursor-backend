@@ -34,19 +34,33 @@ does not set it.
 
 `stream`, the default, uses `--output-format stream-json` and maps assistant
 text blocks, `tool_call` starts and finishes, and the terminal `result` event
-onto `contracts.BackendEvent`. A call's start is a `tool` event whose
-`ToolCall` is in the `started` state, under the `call_id` of the line. Its end
-is a `tool_done` event in the `succeeded` state, or in the `failed` state with
-an `Error` taken from the first line of the failure, bounded to 200 runes. A
-finished line whose start the turn never saw emits nothing. A turn remembers
-the tool of each open call, up to 256 calls: past that bound a call still
-starts, but its end is not reported. A `tool` line with no `call_id` keeps only
-the legacy `Tool` and `Detail` fields, with no `ToolCall`. Each assistant text block after the first non-blank
-text block of a turn carries a leading blank line (`\n\n`), so consumers that
-concatenate text events keep the blocks apart. Unlike the claude backend, which
-trims each block's text, this backend emits the text as it arrives: a block that
-ends with a newline, followed by another block, gives three line breaks at the
-join.
+onto `contracts.BackendEvent`. A call's start is a `tool` event whose `ToolCall`
+is in the `started` state, under the `call_id` of the line. Its end is a
+`tool_done` event in the `succeeded` state, or in the `failed` state with an
+`Error` of at most 200 runes. For a `shellToolCall` the error reads `exit code
+N`, followed by the first line of stderr in parentheses when there is one; a
+timeout reads `timeout after Nms`, a rejection `rejected: <reason>`, a spawn
+failure `spawn error: <error>` and a denial `permission denied: <error>`. Any
+other failure takes the first non-empty of `message`, `error`, `stderr` or
+`reason`, a bare string result is taken as it is, and without any of them the
+error is the name of the result. So `Error` is the first line of stderr or of a
+message, which can carry a secret: the host exports it only on opt-in. A
+finished line whose start the turn never saw emits nothing. A finished line
+whose result is absent or unreadable emits nothing either, and its call stays
+`started`, with no `tool_done`. The turn tracks the tool of each open call, up
+to 256 open calls. A `started` line whose `call_id` is already open, or that
+comes past that bound, emits a plain `tool` event with no `ToolCall`, and leaves
+the tracker as it was: an ID that is not tracked never leaves as `started`. A
+second finish for the same ID emits nothing, because the first one removes the
+ID. A call still open when the turn ends, whether on its result, on an error or
+on an interruption, stays `started` with no `tool_done`: the tracker belongs to
+one turn and is dropped with it. A `tool` line with no `call_id` keeps only the
+legacy `Tool` and `Detail` fields, with no `ToolCall`. Each assistant text block
+after the first non-blank text block of a turn carries a leading blank line
+(`\n\n`), so consumers that concatenate text events keep the blocks apart.
+Unlike the claude backend, which trims each block's text, this backend emits the
+text as it arrives: a block that ends with a newline, followed by another block,
+gives three line breaks at the join.
 
 Unlike a persistent-process backend, `cursor-agent` exits after every headless
 turn, so continuity comes from the session id in the `result` event. It is stored
