@@ -394,8 +394,11 @@ func emitToolDone(event cursorEvent, onEvent func(contracts.BackendEvent), tools
 	if !open {
 		return
 	}
-	result, hasResult := toolCallResult(event.ToolCall)
-	if !hasResult {
+	result, reading := toolCallResult(event.ToolCall)
+	if reading == resultMalformed {
+		tools.warnMalformedOnce()
+	}
+	if reading != resultRead {
 		return
 	}
 	emit(onEvent, contracts.BackendEvent{Kind: contracts.BackendKindToolDone, ToolCall: &contracts.ToolCall{ID: event.CallID, Tool: tool, State: result.state, Error: result.reason}})

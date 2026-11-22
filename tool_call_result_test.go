@@ -1,10 +1,14 @@
 package cursor
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
+
+const ambiguousResult = `{"success":{},"failure":{"message":"boom"}}`
 
 func TestFailureErrorIsTheFirstNonBlankLine(t *testing.T) {
 	cases := []struct {
@@ -45,5 +49,51 @@ func TestAbortedFailureNamesTheAbort(t *testing.T) {
 				t.Fatalf("call = %+v, want a failed call with error %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAmbiguousResultEmitsNoToolDone(t *testing.T) {
+	events := toolEvents(readTurnEvents(t, readStartedLine, completedLine(readCallWithResult(ambiguousResult))))
+	if len(events) != 1 || events[0].Kind != contracts.BackendKindTool || events[0].ToolCall == nil || events[0].ToolCall.State != contracts.ToolCallStarted {
+		t.Fatalf("tool events = %+v, want the started call alone, with no tool_done", events)
+	}
+}
+
+func TestAmbiguousResultFreesTheOpenPlace(t *testing.T) {
+	lines := make([]string, 0, maxOpenToolCalls+2)
+	for i := range maxOpenToolCalls {
+		lines = append(lines, withCallID(readStartedLine, fmt.Sprintf("call-%d", i)))
+	}
+	lines = append(lines,
+		withCallID(readSucceededLine, "call-0"),
+		withCallID(readStartedLine, fmt.Sprintf("call-%d", maxOpenToolCalls)),
+	)
+	events := toolEvents(readTurnEvents(t, lines...))
+	last := events[len(events)-1]
+	if last.Kind != contracts.BackendKindTool || last.ToolCall == nil || last.ToolCall.ID != fmt.Sprintf("call-%d", maxOpenToolCalls) {
+		t.Fatalf("last event = %+v, want call-%d opened in the place freed", last, maxOpenToolCalls)
+	}
+}
+
+func TestAmbiguousResultLeavesTheIDSeen(t *testing.T) {
+	events := toolEvents(readTurnEvents(t, readStartedLine, completedLine(readCallWithResult(ambiguousResult)), readStartedLine))
+	if len(events) != 2 || events[1].Kind != contracts.BackendKindTool || events[1].ToolCall != nil {
+		t.Fatalf("tool events = %+v, want the repeated start bare after an ambiguous end", events)
+	}
+}
+
+func TestMalformedResultWarnsOnceAPerTurn(t *testing.T) {
+	logged := captureLog(t)
+	ambiguous := completedLine(readCallWithResult(ambiguousResult))
+	readTurnEvents(t, readStartedLine, ambiguous, withCallID(readStartedLine, "call-2"), withCallID(ambiguous, "call-2"))
+	readTurnEvents(t, readStartedLine, ambiguous)
+	got := nonEmptyLines(logged.String())
+	if len(got) != 2 {
+		t.Fatalf("log has %d lines, want one warning per turn:\n%s", len(got), logged)
+	}
+	for _, line := range got {
+		if !strings.Contains(line, "level=WARN") || !strings.HasSuffix(line, `msg="tool call result carries more than one outcome, the call stays started"`) {
+			t.Fatalf("warning = %q, want a WARN with the message alone and no value", line)
+		}
 	}
 }

@@ -29,10 +29,19 @@ const (
 var wholeNumber = regexp.MustCompile(`^(0|-?[1-9]\d*)$`)
 
 type toolCallTracker struct {
-	open      map[string]string
-	seen      map[string]struct{}
-	openBound boundReport
-	seenBound boundReport
+	open              map[string]string
+	seen              map[string]struct{}
+	openBound         boundReport
+	seenBound         boundReport
+	malformedReported bool
+}
+
+func (t *toolCallTracker) warnMalformedOnce() {
+	if t.malformedReported {
+		return
+	}
+	t.malformedReported = true
+	slog.Warn("tool call result carries more than one outcome, the call stays started")
 }
 
 type boundReport struct {
@@ -104,23 +113,39 @@ type toolResult struct {
 	reason string
 }
 
-func toolCallResult(call map[string]json.RawMessage) (toolResult, bool) {
+type resultReading int
+
+const (
+	resultAbsent resultReading = iota
+	resultMalformed
+	resultRead
+)
+
+func toolCallResult(call map[string]json.RawMessage) (toolResult, resultReading) {
 	entry, ok := singleTool(call)
 	if !ok {
-		return toolResult{}, false
+		return toolResult{}, resultAbsent
 	}
 	var parsed struct {
 		Result map[string]json.RawMessage `json:"result"`
 	}
 	if json.Unmarshal(entry.body, &parsed) != nil || len(parsed.Result) == 0 {
-		return toolResult{}, false
+		return toolResult{}, resultAbsent
+	}
+	if len(parsed.Result) > 1 {
+		return toolResult{}, resultMalformed
 	}
 	for outcome, value := range parsed.Result {
-		if outcome != toolResultSuccess {
-			return toolResult{state: contracts.ToolCallFailed, reason: failureReason(entry.name, outcome, value)}, true
-		}
+		return outcomeResult(entry.name, outcome, value), resultRead
 	}
-	return toolResult{state: contracts.ToolCallSucceeded}, true
+	return toolResult{}, resultAbsent
+}
+
+func outcomeResult(tool, outcome string, value json.RawMessage) toolResult {
+	if outcome == toolResultSuccess {
+		return toolResult{state: contracts.ToolCallSucceeded}
+	}
+	return toolResult{state: contracts.ToolCallFailed, reason: failureReason(tool, outcome, value)}
 }
 
 func failureReason(tool, outcome string, value json.RawMessage) string {
