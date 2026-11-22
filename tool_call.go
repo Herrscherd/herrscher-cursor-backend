@@ -2,13 +2,15 @@ package cursor
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 
 	contracts "github.com/Herrscherd/herrscher-contracts"
 )
 
 const (
-	maxTrackedToolCalls        = 256
+	maxOpenToolCalls           = 256
+	maxSeenToolCalls           = 4096
 	maxToolErrorRunes          = 200
 	toolResultSuccess          = "success"
 	toolResultFailure          = "failure"
@@ -19,28 +21,33 @@ const (
 	shellToolName              = "shellToolCall"
 )
 
+var wholeNumber = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
+
 type toolCallTracker struct {
-	tools map[string]string
+	open map[string]string
+	seen map[string]struct{}
 }
 
-func (t *toolCallTracker) remember(callID, tool string) bool {
-	if _, open := t.tools[callID]; open {
+func (t *toolCallTracker) begin(callID, tool string) bool {
+	if _, known := t.seen[callID]; known || len(t.seen) >= maxSeenToolCalls {
 		return false
 	}
-	if len(t.tools) >= maxTrackedToolCalls {
+	if t.seen == nil {
+		t.seen = make(map[string]struct{})
+		t.open = make(map[string]string)
+	}
+	t.seen[callID] = struct{}{}
+	if tool == "" || len(t.open) >= maxOpenToolCalls {
 		return false
 	}
-	if t.tools == nil {
-		t.tools = make(map[string]string)
-	}
-	t.tools[callID] = tool
+	t.open[callID] = tool
 	return true
 }
 
 func (t *toolCallTracker) finish(callID string) (string, bool) {
-	tool, known := t.tools[callID]
-	delete(t.tools, callID)
-	return tool, known
+	tool, open := t.open[callID]
+	delete(t.open, callID)
+	return tool, open
 }
 
 type toolEntry struct {
@@ -83,70 +90,49 @@ func toolCallResult(call map[string]json.RawMessage) (toolResult, bool) {
 }
 
 func failureReason(tool, outcome string, value json.RawMessage) string {
-	reason := ""
-	if tool == shellToolName {
-		reason = shellFailureText(outcome, value)
+	if tool == shellToolName && isShellOutcome(outcome) {
+		return boundRunes(firstLine(orDefault(shellFailureText(outcome, value), outcome)))
 	}
-	if reason == "" {
-		reason = failureText(value)
+	return boundRunes(firstLine(orDefault(failureText(value), outcome)))
+}
+
+func isShellOutcome(outcome string) bool {
+	switch outcome {
+	case toolResultFailure, toolResultTimeout, toolResultRejected, toolResultSpawnError, toolResultPermissionDenied:
+		return true
 	}
-	if reason == "" {
-		reason = outcome
-	}
-	return boundRunes(firstLine(reason))
+	return false
 }
 
 func shellFailureText(outcome string, value json.RawMessage) string {
+	fields, isObject := decodeFields(value)
+	if !isObject {
+		return ""
+	}
 	switch outcome {
 	case toolResultFailure:
-		var failure struct {
-			ExitCode json.Number `json:"exitCode"`
-			Stderr   string      `json:"stderr"`
-		}
-		if json.Unmarshal(value, &failure) != nil {
+		code, ok := fields.whole("exitCode")
+		if !ok {
 			return ""
 		}
-		return exitCodeText(failure.ExitCode.String(), firstLine(failure.Stderr))
+		return exitCodeText(code, firstLine(fields.text("stderr")))
 	case toolResultTimeout:
-		var timeout struct {
-			TimeoutMs json.Number `json:"timeoutMs"`
-		}
-		if json.Unmarshal(value, &timeout) != nil || timeout.TimeoutMs == "" {
+		ms, ok := fields.whole("timeoutMs")
+		if !ok {
 			return ""
 		}
-		return "timeout after " + timeout.TimeoutMs.String() + "ms"
+		return "timeout after " + ms + "ms"
 	case toolResultRejected:
-		var rejected struct {
-			Reason string `json:"reason"`
-		}
-		if json.Unmarshal(value, &rejected) != nil {
-			return ""
-		}
-		return "rejected: " + orDefault(rejected.Reason, "unknown reason")
+		return "rejected: " + orDefault(fields.text("reason"), "unknown reason")
 	case toolResultSpawnError:
-		var spawn struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(value, &spawn) != nil {
-			return ""
-		}
-		return "spawn error: " + spawn.Error
+		return "spawn error: " + fields.text("error")
 	case toolResultPermissionDenied:
-		var denied struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(value, &denied) != nil {
-			return ""
-		}
-		return "permission denied: " + denied.Error
+		return "permission denied: " + fields.text("error")
 	}
 	return ""
 }
 
 func exitCodeText(code, stderrLine string) string {
-	if code == "" {
-		return ""
-	}
 	if stderrLine == "" {
 		return "exit code " + code
 	}
@@ -165,21 +151,42 @@ func failureText(value json.RawMessage) string {
 	if json.Unmarshal(value, &text) == nil {
 		return text
 	}
-	var fields struct {
-		Message string `json:"message"`
-		Error   string `json:"error"`
-		Stderr  string `json:"stderr"`
-		Reason  string `json:"reason"`
-	}
-	if json.Unmarshal(value, &fields) != nil {
+	fields, isObject := decodeFields(value)
+	if !isObject {
 		return ""
 	}
-	for _, field := range []string{fields.Message, fields.Error, fields.Stderr, fields.Reason} {
-		if field != "" {
+	for _, name := range []string{"message", "error", "stderr", "reason"} {
+		if field := fields.text(name); field != "" {
 			return field
 		}
 	}
 	return ""
+}
+
+type rawFields map[string]json.RawMessage
+
+func decodeFields(value json.RawMessage) (rawFields, bool) {
+	var fields rawFields
+	if json.Unmarshal(value, &fields) != nil || fields == nil {
+		return nil, false
+	}
+	return fields, true
+}
+
+func (f rawFields) text(name string) string {
+	var text string
+	if json.Unmarshal(f[name], &text) != nil {
+		return ""
+	}
+	return text
+}
+
+func (f rawFields) whole(name string) (string, bool) {
+	raw := f[name]
+	if !wholeNumber.Match(raw) {
+		return "", false
+	}
+	return string(raw), true
 }
 
 func firstLine(text string) string {

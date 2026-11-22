@@ -14,7 +14,7 @@ import (
 const (
 	readStartedLine   = `{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"README.md"}}},"model_call_id":"m1","session_id":"s","timestamp_ms":1}`
 	readSucceededLine = `{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"README.md"},"result":{"success":{"content":"# herrscher"}}}},"model_call_id":"m1","session_id":"s","timestamp_ms":2}`
-	readFailedLine    = `{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"README.md"},"result":{"error":{"message":"no such file: README.md\nat /work/tree/stack"}}}},"model_call_id":"m1","session_id":"s","timestamp_ms":2}`
+	readFailedLine    = `{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"README.md"},"result":{"error":{"path":"README.md","error":"no such file: README.md\nat /work/tree/stack"}}}},"model_call_id":"m1","session_id":"s","timestamp_ms":2}`
 )
 
 func readTurnEvents(t *testing.T, lines ...string) []contracts.BackendEvent {
@@ -45,6 +45,17 @@ func completedLine(toolCall string) string {
 
 func readCallWithResult(result string) string {
 	return fmt.Sprintf(`{"readToolCall":{"args":{"path":"README.md"},"result":%s}}`, result)
+}
+
+func doneCallOf(t *testing.T, tool, result string) contracts.ToolCall {
+	t.Helper()
+	started := fmt.Sprintf(`{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{%q:{"args":{"path":"README.md"}}},"session_id":"s"}`, tool)
+	done := completedLine(fmt.Sprintf(`{%q:{"args":{"path":"README.md"},"result":%s}}`, tool, result))
+	events := toolEvents(readTurnEvents(t, started, done))
+	if len(events) != 2 || events[1].Kind != contracts.BackendKindToolDone || events[1].ToolCall == nil {
+		t.Fatalf("tool events = %+v, want a start and a tool_done", events)
+	}
+	return *events[1].ToolCall
 }
 
 func TestStartedToolCallCarriesItsCallID(t *testing.T) {
@@ -93,7 +104,7 @@ func TestToolCallEndStatesFollowTheResultOutcome(t *testing.T) {
 		{
 			name:   "error",
 			tool:   "readToolCall",
-			result: `{"error":{"message":"no such file: README.md\nat /work"}}`,
+			result: `{"error":{"path":"README.md","error":"no such file: README.md\nat /work"}}`,
 			want:   contracts.ToolCall{ID: "call-1", Tool: "readToolCall", State: contracts.ToolCallFailed, Error: "no such file: README.md"},
 		},
 		{
@@ -135,13 +146,7 @@ func TestToolCallEndStatesFollowTheResultOutcome(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			started := fmt.Sprintf(`{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{%q:{"args":{"path":"README.md"}}},"session_id":"s"}`, tc.tool)
-			done := completedLine(fmt.Sprintf(`{%q:{"args":{"path":"README.md"},"result":%s}}`, tc.tool, tc.result))
-			events := toolEvents(readTurnEvents(t, started, done))
-			if len(events) != 2 || events[1].Kind != contracts.BackendKindToolDone || events[1].ToolCall == nil {
-				t.Fatalf("tool events = %+v, want a start and a tool_done", events)
-			}
-			if got := *events[1].ToolCall; got != tc.want {
+			if got := doneCallOf(t, tc.tool, tc.result); got != tc.want {
 				t.Fatalf("done call = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -161,7 +166,7 @@ func TestFailedToolCallEmitsItsFirstLineAsError(t *testing.T) {
 
 func TestFailedToolCallErrorIsBounded(t *testing.T) {
 	long := strings.Repeat("é", maxToolErrorRunes+50)
-	line := completedLine(fmt.Sprintf(`{"readToolCall":{"args":{"path":"x"},"result":{"error":{"message":%q}}}}`, long))
+	line := completedLine(fmt.Sprintf(`{"readToolCall":{"args":{"path":"x"},"result":{"error":{"path":"x","error":%q}}}}`, long))
 	events := toolEvents(readTurnEvents(t, readStartedLine, line))
 	got := events[len(events)-1].ToolCall
 	if got == nil || got.State != contracts.ToolCallFailed {
@@ -283,24 +288,163 @@ func TestEveryEmittedToolEventPassesValidateToolCall(t *testing.T) {
 }
 
 func TestStartedBeyondTheBoundEmitsBareTool(t *testing.T) {
-	lines := make([]string, 0, maxTrackedToolCalls+3)
-	for i := range maxTrackedToolCalls + 1 {
+	lines := make([]string, 0, maxOpenToolCalls+3)
+	for i := range maxOpenToolCalls + 1 {
 		lines = append(lines, strings.Replace(readStartedLine, "call-1", fmt.Sprintf("call-%d", i), 1))
 	}
 	lines = append(lines,
 		strings.Replace(readSucceededLine, "call-1", "call-0", 1),
-		strings.Replace(readSucceededLine, "call-1", fmt.Sprintf("call-%d", maxTrackedToolCalls), 1),
+		strings.Replace(readSucceededLine, "call-1", fmt.Sprintf("call-%d", maxOpenToolCalls), 1),
 	)
 	events := toolEvents(readTurnEvents(t, lines...))
-	if len(events) != maxTrackedToolCalls+2 {
-		t.Fatalf("tool events = %d, want %d: the overflow call must not get a done", len(events), maxTrackedToolCalls+2)
+	if len(events) != maxOpenToolCalls+2 {
+		t.Fatalf("tool events = %d, want %d: the overflow call must not get a done", len(events), maxOpenToolCalls+2)
 	}
-	overflow := events[maxTrackedToolCalls]
+	overflow := events[maxOpenToolCalls]
 	if overflow.Kind != contracts.BackendKindTool || overflow.Tool != "readToolCall" || overflow.ToolCall != nil {
 		t.Fatalf("overflow start = %+v, want a bare tool event", overflow)
 	}
 	last := events[len(events)-1]
 	if last.Kind != contracts.BackendKindToolDone || last.ToolCall == nil || last.ToolCall.ID != "call-0" {
 		t.Fatalf("last event = %+v, want the done of call-0", last)
+	}
+}
+
+func TestFinishedCallIDComingBackStaysBare(t *testing.T) {
+	events := toolEvents(readTurnEvents(t, readStartedLine, readSucceededLine, readStartedLine, readSucceededLine))
+	if len(events) != 3 {
+		t.Fatalf("tool events = %+v, want a start, a done and a bare start", events)
+	}
+	if returning := events[2]; returning.Kind != contracts.BackendKindTool || returning.Tool != "readToolCall" || returning.ToolCall != nil {
+		t.Fatalf("returning start = %+v, want a bare tool event", returning)
+	}
+}
+
+func TestCallIDSeenBeyondTheBoundStaysBare(t *testing.T) {
+	lines := make([]string, 0, maxSeenToolCalls+2)
+	for i := range maxSeenToolCalls + 1 {
+		lines = append(lines, strings.Replace(readStartedLine, "call-1", fmt.Sprintf("call-%d", i), 1))
+	}
+	lines = append(lines,
+		strings.Replace(readSucceededLine, "call-1", fmt.Sprintf("call-%d", maxSeenToolCalls), 1),
+		strings.Replace(readSucceededLine, "call-1", "call-0", 1),
+	)
+	events := toolEvents(readTurnEvents(t, lines...))
+	if len(events) != maxSeenToolCalls+2 {
+		t.Fatalf("tool events = %d, want %d: only the done of call-0 follows the starts", len(events), maxSeenToolCalls+2)
+	}
+	beyond := events[maxSeenToolCalls]
+	if beyond.Kind != contracts.BackendKindTool || beyond.Tool != "readToolCall" || beyond.ToolCall != nil {
+		t.Fatalf("start beyond the seen bound = %+v, want a bare tool event", beyond)
+	}
+	last := events[len(events)-1]
+	if last.Kind != contracts.BackendKindToolDone || last.ToolCall == nil || last.ToolCall.ID != "call-0" {
+		t.Fatalf("last event = %+v, want the done of call-0", last)
+	}
+}
+
+func TestStartRefusedByTheOpenBoundStaysBareAfterAPlaceFrees(t *testing.T) {
+	lines := make([]string, 0, maxOpenToolCalls+4)
+	for i := range maxOpenToolCalls {
+		lines = append(lines, strings.Replace(readStartedLine, "call-1", fmt.Sprintf("call-%d", i), 1))
+	}
+	refused := strings.Replace(readStartedLine, "call-1", fmt.Sprintf("call-%d", maxOpenToolCalls), 1)
+	lines = append(lines,
+		refused,
+		strings.Replace(readSucceededLine, "call-1", "call-0", 1),
+		refused,
+		strings.Replace(readSucceededLine, "call-1", fmt.Sprintf("call-%d", maxOpenToolCalls), 1),
+	)
+	events := toolEvents(readTurnEvents(t, lines...))
+	if len(events) != maxOpenToolCalls+3 {
+		t.Fatalf("tool events = %d, want %d: the refused start stays bare after a place frees", len(events), maxOpenToolCalls+3)
+	}
+	if first := events[maxOpenToolCalls]; first.Kind != contracts.BackendKindTool || first.ToolCall != nil {
+		t.Fatalf("refused start = %+v, want a bare tool event", first)
+	}
+	if done := events[maxOpenToolCalls+1]; done.Kind != contracts.BackendKindToolDone || done.ToolCall == nil || done.ToolCall.ID != "call-0" {
+		t.Fatalf("freed done = %+v, want the done of call-0", done)
+	}
+	if repeat := events[maxOpenToolCalls+2]; repeat.Kind != contracts.BackendKindTool || repeat.ToolCall != nil {
+		t.Fatalf("repeated refused start = %+v, want a bare tool event", repeat)
+	}
+}
+
+func TestStartWithoutToolNameMarksItsIDSeen(t *testing.T) {
+	nameless := `{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{},"session_id":"s"}`
+	events := toolEvents(readTurnEvents(t, nameless, readStartedLine, readSucceededLine))
+	if len(events) != 2 {
+		t.Fatalf("tool events = %+v, want the nameless start and the later start, both bare", events)
+	}
+	for i := range events {
+		if events[i].ToolCall != nil {
+			t.Fatalf("event %d = %+v, want a bare tool event", i, events[i])
+		}
+	}
+}
+
+func TestFailureTextKeepsEachStringField(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+		want   string
+	}{
+		{name: "wrong type message keeps error", result: `{"error":{"message":5,"error":"boom"}}`, want: "boom"},
+		{name: "wrong type error keeps message", result: `{"error":{"message":"first","error":5}}`, want: "first"},
+		{name: "wrong type reason keeps stderr", result: `{"error":{"reason":7,"stderr":"boom"}}`, want: "boom"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := doneCallOf(t, "readToolCall", tc.result); got.State != contracts.ToolCallFailed || got.Error != tc.want {
+				t.Fatalf("call = %+v, want a failed call with error %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShellFailureKeepsItsExitCodeWhenStderrHasTheWrongType(t *testing.T) {
+	got := doneCallOf(t, "shellToolCall", `{"failure":{"exitCode":2,"stderr":5}}`)
+	if got.Error != "exit code 2" {
+		t.Fatalf("error = %q, want %q", got.Error, "exit code 2")
+	}
+}
+
+func TestShellExitCodeCountsOnlyWholeNumbers(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+	}{
+		{name: "string", result: `{"failure":{"exitCode":"2"}}`},
+		{name: "null", result: `{"failure":{"exitCode":null,"stderr":"boom"}}`},
+		{name: "absent", result: `{"failure":{"stderr":"boom"}}`},
+		{name: "fraction", result: `{"failure":{"exitCode":2.5}}`},
+		{name: "exponent", result: `{"failure":{"exitCode":2e3}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := doneCallOf(t, "shellToolCall", tc.result); got.Error != toolResultFailure {
+				t.Fatalf("error = %q, want the outcome name %q", got.Error, toolResultFailure)
+			}
+		})
+	}
+}
+
+func TestShellTimeoutCountsOnlyWholeNumbers(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+	}{
+		{name: "string", result: `{"timeout":{"timeoutMs":"5000"}}`},
+		{name: "null", result: `{"timeout":{"timeoutMs":null}}`},
+		{name: "absent", result: `{"timeout":{}}`},
+		{name: "fraction", result: `{"timeout":{"timeoutMs":5000.5}}`},
+		{name: "exponent", result: `{"timeout":{"timeoutMs":5e3}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := doneCallOf(t, "shellToolCall", tc.result); got.Error != toolResultTimeout {
+				t.Fatalf("error = %q, want the outcome name %q", got.Error, toolResultTimeout)
+			}
+		})
 	}
 }

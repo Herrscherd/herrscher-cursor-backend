@@ -383,15 +383,15 @@ func emitAssistantText(event cursorEvent, onEvent func(contracts.BackendEvent), 
 
 func emitToolCall(event cursorEvent, onEvent func(contracts.BackendEvent), tools *toolCallTracker) {
 	started := toolCallEvent(event.ToolCall)
-	if event.CallID != "" && started.Tool != "" && tools.remember(event.CallID, started.Tool) {
+	if event.CallID != "" && tools.begin(event.CallID, started.Tool) {
 		started.ToolCall = &contracts.ToolCall{ID: event.CallID, Tool: started.Tool, Detail: started.Detail, State: contracts.ToolCallStarted}
 	}
 	emit(onEvent, started)
 }
 
 func emitToolDone(event cursorEvent, onEvent func(contracts.BackendEvent), tools *toolCallTracker) {
-	tool, known := tools.finish(event.CallID)
-	if !known {
+	tool, open := tools.finish(event.CallID)
+	if !open {
 		return
 	}
 	result, hasResult := toolCallResult(event.ToolCall)
