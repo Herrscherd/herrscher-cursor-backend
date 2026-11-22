@@ -156,13 +156,21 @@ func shellFailureText(outcome string, value json.RawMessage) string {
 		}
 		return "timeout after " + milliseconds + "ms"
 	case toolResultRejected:
-		return "rejected: " + orDefault(fields.text("reason"), "unknown reason")
+		return labelled("rejected: ", fields.text("reason"))
 	case toolResultSpawnError:
-		return "spawn error: " + fields.text("error")
+		return labelled("spawn error: ", fields.text("error"))
 	case toolResultPermissionDenied:
-		return "permission denied: " + fields.text("error")
+		return labelled("permission denied: ", fields.text("error"))
 	}
 	return ""
+}
+
+func labelled(label, text string) string {
+	line := firstLine(text)
+	if line == "" {
+		return ""
+	}
+	return label + line
 }
 
 func exitCodeText(code, stderrLine string) string {

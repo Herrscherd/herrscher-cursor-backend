@@ -44,8 +44,10 @@ is in the `started` state, under the `call_id` of the line. Its end is a
 `Error` of at most 200 runes. For a `shellToolCall` the error reads `exit code
 N`, followed by the first line of stderr in parentheses when there is one; a
 timeout reads `timeout after Nms`, a rejection `rejected: <reason>`, a spawn
-failure `spawn error: <error>` and a denial `permission denied: <error>`. Any
-other failure takes the first non-empty of `message`, `error`, `stderr` or
+failure `spawn error: <error>` and a denial `permission denied: <error>`. A
+rejection, a spawn failure or a denial with no text reads as the name of its
+result, as a timeout or a failure without its number does. Any other failure
+takes the first non-empty of `message`, `error`, `stderr` or
 `reason`, each read on its own, so a field of the wrong JSON type is skipped
 and the others still count. A bare string result is taken as it is, and
 without any of them the error is the name of the result. A `shellToolCall`

@@ -549,3 +549,30 @@ func TestShellWholeNumbersStayWithinTheirRange(t *testing.T) {
 		})
 	}
 }
+
+func TestShellVariantWithoutDetailNamesItsResult(t *testing.T) {
+	cases := []struct {
+		name   string
+		result string
+		want   string
+	}{
+		{name: "failure without exit code", result: `{"failure":{}}`, want: toolResultFailure},
+		{name: "timeout without milliseconds", result: `{"timeout":{}}`, want: toolResultTimeout},
+		{name: "rejection without reason", result: `{"rejected":{}}`, want: toolResultRejected},
+		{name: "rejection with an empty reason", result: `{"rejected":{"reason":""}}`, want: toolResultRejected},
+		{name: "spawn error without error", result: `{"spawnError":{}}`, want: toolResultSpawnError},
+		{name: "spawn error with an empty error", result: `{"spawnError":{"error":""}}`, want: toolResultSpawnError},
+		{name: "spawn error with a blank error", result: `{"spawnError":{"error":"\n"}}`, want: toolResultSpawnError},
+		{name: "spawn error as a bare string", result: `{"spawnError":""}`, want: toolResultSpawnError},
+		{name: "permission denied without error", result: `{"permissionDenied":{}}`, want: toolResultPermissionDenied},
+		{name: "permission denied with an empty error", result: `{"permissionDenied":{"error":""}}`, want: toolResultPermissionDenied},
+		{name: "permission denied as a bare string", result: `{"permissionDenied":""}`, want: toolResultPermissionDenied},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := doneCallOf(t, "shellToolCall", tc.result); got.State != contracts.ToolCallFailed || got.Error != tc.want {
+				t.Fatalf("call = %+v, want a failed call with error %q", got, tc.want)
+			}
+		})
+	}
+}
