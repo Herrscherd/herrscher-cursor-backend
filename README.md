@@ -38,80 +38,94 @@ does not set it.
 
 `stream`, the default, uses `--output-format stream-json` and maps assistant
 text blocks, `tool_call` starts and finishes, and the terminal `result` event
-onto `contracts.BackendEvent`. A call's start is a `tool` event whose `ToolCall`
-is in the `started` state, under the `call_id` of the line. Its end is a
-`tool_done` event in the `succeeded` state, or in the `failed` state with an
-`Error` of at most 200 runes. For a `shellToolCall`, a `failure` result reads
-`exit code N`, followed by the first non-blank line of stderr in parentheses
-when there is one. When that `failure` carries `aborted: true`, the error reads
-`aborted`, followed by `, exit code N` when `exitCode` is a whole number in the
-int32 range, then the first non-blank line of stderr in parentheses the same way
-(`aborted (line)` without an exit code). The other results of a `shellToolCall`
-ignore `aborted`: a timeout reads `timeout after Nms`, a rejection
-`rejected: <reason>`, a spawn failure `spawn error: <error>` and a denial
-`permission denied: <error>`. A rejection, a spawn failure or a denial with no
-text reads as the name of its result. A failure of any other tool takes the
-first of `message`, `error`, `stderr` or `reason` that has a non-blank line,
-each read on its own, so a field of the wrong JSON type or a blank one is
-skipped and the others still count. A bare string result is read the same way,
-and without any of them the error is the name of the result. In every case the
-error is the first non-blank line of the text: leading blank lines are skipped,
-and the rest of the text is dropped. A `shellToolCall` reads `exitCode` and
-`timeoutMs` only as whole numbers in the int32 range, and `timeoutMs` only when
-it is not negative. A string, a fraction, an exponent, `-0`, a value out of
-range or a missing value is never quoted. On a timeout, or on a `failure`
-without `aborted: true`, the error falls back to the name of the result. Under
-`aborted: true` the exit code is left out and the error still reads `aborted`.
+onto `contracts.BackendEvent`.
 
-A call with no tool name, or with a tool name longer than 256 bytes, never
-opens: its start is a bare `tool` event, its end emits nothing, and its
-`call_id` still counts as seen, so a later start with the same id stays bare.
+Each turn keeps two sets of `call_id`. The open set holds the calls that
+started and have not finished, up to 256. The seen set holds the IDs that
+starts presented, up to 4096. A start adds its ID to the sets, and a finish only
+removes its ID from the open set.
 
-A result with more than one outcome key, or an end whose tool key is not the
-one of its start, is malformed: its end emits no `tool_done`, the open place it
-held is freed, its `call_id` stays seen, and the turn logs one warning, without
-the value, however many such results it carries.
+A `tool_call` line in the `started` state opens a call when all of these hold:
 
-There is no reset: the seen set lives for one turn. The contract's reset, which
-opens a new run in which a call id may come back, is not implemented, because no
-reset has been observed from cursor-agent. A call id that returns in a later
-turn is therefore a new call.
+- its `call_id` is at most 256 bytes long and is not in the seen set;
+- its `tool_call` holds a single tool key, whose name is not empty and is at
+  most 256 bytes long;
+- the open set holds fewer than 256 calls and the seen set fewer than 4096 IDs.
 
-Since `Error` is the first non-blank line of stderr or of a message, it can
-carry a secret, as `Detail` can. The contract requires every exporter on the
-host side to send `Error`, like `Detail`, only when the operator opts in.
+An opened call is a `tool` event whose `ToolCall` is in the `started` state,
+under the `call_id` of the line. Any other start is a plain `tool` event with no
+`ToolCall`. Its ID still enters the seen set when it is at most 256 bytes long
+and the seen set is under 4096, so a start refused for its tool key (none, two
+or more, an empty name or one over 256 bytes) or by the open bound keeps that ID
+bare for the rest of the turn, even after a place frees up. An ID over 256 bytes, or one past the seen bound, is never recorded.
+The first start refused by each bound in a turn logs one `slog.Warn` per bound
+and per turn, with the attributes `bound` (`max_open` or `max_seen`) and
+`limit`.
 
-A finished line whose start the turn never saw emits nothing. A finished line
-whose result is absent or unreadable emits nothing either: its call stays
-`started`, with no `tool_done`, and that finish still frees the call's place.
+A `tool_call` line in the `completed` state emits only for an ID in the open
+set. It frees that place, the ID stays seen, and a repeated or unknown finish
+emits nothing. Its result then decides what it emits:
 
-Each turn keeps two sets of `call_id`, and only a start touches them. The open
-set holds the calls that started and have not finished, up to 256. The seen set
-holds every ID a start has presented, up to 4096. An ID enters the seen set as
-soon as its start arrives, whether that start opens a call, is refused by the
-open bound, or names no tool. A `started` line opens a call only when its ID is
-at most 256 bytes long, not seen yet, the open set is under 256 and the seen set
-is under 4096. An ID over 256 bytes is never recorded, so its start stays bare
-and its finish emits nothing. Otherwise the start leaves as a plain `tool` event
-with no `ToolCall`, and the open set is left alone. A start refused by the open
-bound is still recorded as seen, so it stays a plain `tool` event for the rest
-of the turn, even after a place frees up. A start past the seen bound is not
-recorded at all, and its finish emits nothing. The first start refused by each
-bound in a turn logs one `slog.Warn` per bound and per turn, with the attributes
-`bound` (`max_open` or `max_seen`) and `limit`. A finish emits only for an ID in
-the open set: it frees that place, and the ID stays seen. A repeated or unknown
-finish emits nothing. A call still open when the turn ends, whether on the
-turn's `result` event, on an error or on an interruption, stays `started` with
-no `tool_done`: the sets belong to one turn and are dropped with it. A `tool`
-line with no `call_id` keeps only the legacy `Tool` and `Detail` fields, with no
-`ToolCall`, when its `tool_call` holds a single tool key. With no key, or with
-two keys or more, it carries neither `Tool` nor `Detail`, where earlier releases
-named one of several keys picked at random. Each assistant text block after the
-first non-blank text block of a turn carries a leading blank line (`\n\n`), so
-consumers that concatenate text events keep the blocks apart. Unlike the claude
-backend, which trims each block's text, this backend emits the text as it
-arrives: a block that ends with a newline, followed by another block, gives
-three line breaks at the join.
+- an absent or unreadable result emits no `tool_done`, and the call stays
+  `started`;
+- a result with more than one outcome key, or an end whose tool key is not the
+  one of its start, is malformed: it emits no `tool_done`, the call stays
+  `started`, and the turn logs one warning, without the value, however many
+  such results it carries;
+- a `success` result emits a `tool_done` event in the `succeeded` state;
+- any other outcome emits a `tool_done` event in the `failed` state, with the
+  `Error` below.
+
+`Error` is always one line of at most 200 runes: the first non-blank line of
+its text, with leading blank lines skipped and the rest of the text dropped.
+For a `shellToolCall` whose outcome is `failure`, `timeout`, `rejected`,
+`spawnError` or `permissionDenied`, the result must be an object, and the error
+reads:
+
+- `failure` with `aborted: true`: `aborted`, followed by `, exit code N` when
+  `exitCode` is valid, then the first non-blank line of stderr in parentheses
+  when there is one (`aborted (line)` without a valid exit code, `aborted`
+  alone without either);
+- `failure` without `aborted: true`: `exit code N`, followed by the first
+  non-blank line of stderr in parentheses when there is one, or `failure` when
+  `exitCode` is not valid;
+- `timeout`: `timeout after Nms`, or `timeout` when `timeoutMs` is not valid or
+  is negative;
+- `rejected`: `rejected: <reason>`; `spawnError`: `spawn error: <error>`;
+  `permissionDenied`: `permission denied: <error>`; each reads as the name of
+  its outcome when that field has no non-blank line;
+- a result that is not an object reads as the name of its outcome.
+
+Only a `failure` reads `aborted`. A valid `exitCode` or `timeoutMs` is a whole
+number in the int32 range, written without a fraction, an exponent or `-0`. Any
+other value is never quoted. Every other tool, and a `shellToolCall` with any
+other outcome, reads a bare string result as its text. An object result takes
+the first of `message`, `error`, `stderr` or `reason` that has a non-blank
+line, each read on its own, so a field of the wrong JSON type or a blank one is
+skipped and the others still count. Without any of them, the error is the name
+of the outcome.
+
+`Error`, the first non-blank line of stderr or of a message, can carry a secret,
+as `Detail` can. The contract requires every exporter on the host side to send
+`Error`, like `Detail`, only when the operator opts in.
+
+The sets belong to one turn and are dropped with it. A call still open when the
+turn ends, whether on the turn's `result` event, on an error or on an
+interruption, stays `started` with no `tool_done`. There is no reset: the
+contract's reset, which opens a new run in which a call ID may come back, is not
+implemented, because no reset has been observed from cursor-agent. A call ID
+that returns in a later turn is therefore a new call.
+
+A `tool` line with no `call_id` keeps only the legacy `Tool` and `Detail`
+fields, with no `ToolCall`, when its `tool_call` holds a single tool key. With
+no key, or with two keys or more, it carries neither `Tool` nor `Detail`, where
+earlier releases named one of several keys picked at random.
+
+Each assistant text block after the first non-blank text block of a turn carries
+a leading blank line (`\n\n`), so consumers that concatenate text events keep
+the blocks apart. Unlike the claude backend, which trims each block's text, this
+backend emits the text as it arrives: a block that ends with a newline, followed
+by another block, gives three line breaks at the join.
 
 Unlike a persistent-process backend, `cursor-agent` exits after every headless
 turn, so continuity comes from the session id in the `result` event. It is stored
