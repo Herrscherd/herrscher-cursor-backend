@@ -321,25 +321,24 @@ func TestFinishedCallIDComingBackStaysBare(t *testing.T) {
 }
 
 func TestCallIDSeenBeyondTheBoundStaysBare(t *testing.T) {
-	lines := make([]string, 0, maxSeenToolCalls+2)
-	for i := range maxSeenToolCalls + 1 {
+	lines := make([]string, 0, maxSeenToolCalls+3)
+	for i := range maxSeenToolCalls {
 		lines = append(lines, strings.Replace(readStartedLine, "call-1", fmt.Sprintf("call-%d", i), 1))
 	}
 	lines = append(lines,
-		strings.Replace(readSucceededLine, "call-1", fmt.Sprintf("call-%d", maxSeenToolCalls), 1),
 		strings.Replace(readSucceededLine, "call-1", "call-0", 1),
+		strings.Replace(readStartedLine, "call-1", fmt.Sprintf("call-%d", maxSeenToolCalls), 1),
+		strings.Replace(readSucceededLine, "call-1", fmt.Sprintf("call-%d", maxSeenToolCalls), 1),
 	)
 	events := toolEvents(readTurnEvents(t, lines...))
 	if len(events) != maxSeenToolCalls+2 {
-		t.Fatalf("tool events = %d, want %d: only the done of call-0 follows the starts", len(events), maxSeenToolCalls+2)
+		t.Fatalf("tool events = %d, want %d: the start past the seen bound must not open, and its done must not emit", len(events), maxSeenToolCalls+2)
 	}
-	beyond := events[maxSeenToolCalls]
-	if beyond.Kind != contracts.BackendKindTool || beyond.Tool != "readToolCall" || beyond.ToolCall != nil {
+	if freed := events[maxSeenToolCalls]; freed.Kind != contracts.BackendKindToolDone || freed.ToolCall == nil || freed.ToolCall.ID != "call-0" {
+		t.Fatalf("freed done = %+v, want the done of call-0", freed)
+	}
+	if beyond := events[maxSeenToolCalls+1]; beyond.Kind != contracts.BackendKindTool || beyond.Tool != "readToolCall" || beyond.ToolCall != nil {
 		t.Fatalf("start beyond the seen bound = %+v, want a bare tool event", beyond)
-	}
-	last := events[len(events)-1]
-	if last.Kind != contracts.BackendKindToolDone || last.ToolCall == nil || last.ToolCall.ID != "call-0" {
-		t.Fatalf("last event = %+v, want the done of call-0", last)
 	}
 }
 
