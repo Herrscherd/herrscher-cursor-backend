@@ -47,7 +47,8 @@ removes its ID from the open set.
 
 A `tool_call` line in the `started` state opens a call when all of these hold:
 
-- its `call_id` is at most 256 bytes long and is not in the seen set;
+- its `call_id` is not empty, is at most 256 bytes long and is not in the seen
+  set;
 - its `tool_call` holds a single tool key, whose name is not empty and is at
   most 256 bytes long;
 - the open set holds fewer than 256 calls and the seen set fewer than 4096 IDs.
