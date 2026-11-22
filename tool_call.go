@@ -21,7 +21,7 @@ const (
 	shellToolName              = "shellToolCall"
 )
 
-var wholeNumber = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
+var wholeNumber = regexp.MustCompile(`^-?(0|[1-9]\d*)$`)
 
 type toolCallTracker struct {
 	open map[string]string
@@ -117,11 +117,11 @@ func shellFailureText(outcome string, value json.RawMessage) string {
 		}
 		return exitCodeText(code, firstLine(fields.text("stderr")))
 	case toolResultTimeout:
-		ms, ok := fields.whole("timeoutMs")
+		milliseconds, ok := fields.whole("timeoutMs")
 		if !ok {
 			return ""
 		}
-		return "timeout after " + ms + "ms"
+		return "timeout after " + milliseconds + "ms"
 	case toolResultRejected:
 		return "rejected: " + orDefault(fields.text("reason"), "unknown reason")
 	case toolResultSpawnError:
